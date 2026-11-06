@@ -17,6 +17,10 @@ class CoresApp {
   static const Color textoSecundario = Color(0xFF6F6B80);
   static const Color sobrePrincipal = Color(0xFFFFFFFF);
 
+  // Controles indisponíveis.
+  static const Color desabilitado = Color(0xFF7B7887);
+  static const Color desabilitadoFundo = Color(0xFFF1EFF7);
+
   // Prioridades.
   static const Color prioridadeBaixa = Color(0xFF2D7050);
   static const Color prioridadeBaixaFundo = Color(0xFFE7F3EC);

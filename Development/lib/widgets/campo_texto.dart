@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
-import '../tema/cores.dart';
+import 'package:flutter/services.dart';
 
-/// Campo de formulário reutilizável no padrão visual do FlowTask
-/// (container branco arredondado com rótulo superior interno e ícone opcional).
+/// Campo de formulário reutilizável no padrão visual do FlowTask.
+///
+/// Usa [TextFormField] diretamente para integrar validação, foco, teclado e
+/// mensagens de erro ao [InputDecorationTheme] definido por [ThemeData].
 class CampoTexto extends StatelessWidget {
   final String rotulo;
   final String? dica;
@@ -10,10 +12,25 @@ class CampoTexto extends StatelessWidget {
   final String? valorInicial;
   final ValueChanged<String>? onChanged;
   final VoidCallback? onTap;
+  final VoidCallback? onEditingComplete;
+  final ValueChanged<String>? onSubmitted;
+  final FormFieldValidator<String>? validator;
+  final String? textoErro;
+  final FocusNode? focusNode;
+  final bool habilitado;
   final bool somenteLeitura;
+  final bool autofocus;
+  final bool ocultarTexto;
+  final int minLinhas;
   final int maxLinhas;
+  final int? maxCaracteres;
+  final IconData? iconePrefixo;
   final IconData? iconeSufixo;
   final TextInputType? tipoTeclado;
+  final TextInputAction? acaoTeclado;
+  final TextCapitalization capitalizacao;
+  final AutovalidateMode? modoAutovalidacao;
+  final List<TextInputFormatter>? formatadores;
 
   const CampoTexto({
     super.key,
@@ -23,82 +40,68 @@ class CampoTexto extends StatelessWidget {
     this.valorInicial,
     this.onChanged,
     this.onTap,
+    this.onEditingComplete,
+    this.onSubmitted,
+    this.validator,
+    this.textoErro,
+    this.focusNode,
+    this.habilitado = true,
     this.somenteLeitura = false,
+    this.autofocus = false,
+    this.ocultarTexto = false,
+    this.minLinhas = 1,
     this.maxLinhas = 1,
+    this.maxCaracteres,
+    this.iconePrefixo,
     this.iconeSufixo,
     this.tipoTeclado,
-  });
+    this.acaoTeclado,
+    this.capitalizacao = TextCapitalization.sentences,
+    this.modoAutovalidacao,
+    this.formatadores,
+  }) : assert(
+         controller == null || valorInicial == null,
+         'controller e valorInicial não podem ser usados ao mesmo tempo.',
+       ),
+       assert(minLinhas > 0),
+       assert(maxLinhas >= minLinhas),
+       assert(!ocultarTexto || maxLinhas == 1);
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: somenteLeitura ? onTap : null,
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-        decoration: BoxDecoration(
-          color: CoresApp.superficie,
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: CoresApp.borda, width: 1.2),
-        ),
-        child: Row(
-          crossAxisAlignment: maxLinhas > 1
-              ? CrossAxisAlignment.start
-              : CrossAxisAlignment.center,
-          children: [
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text(
-                    rotulo,
-                    style: const TextStyle(
-                      color: CoresApp.textoSecundario,
-                      fontSize: 12,
-                      fontWeight: FontWeight.w500,
-                    ),
-                  ),
-                  const SizedBox(height: 4),
-                  TextFormField(
-                    controller: controller,
-                    initialValue: controller == null ? valorInicial : null,
-                    onChanged: onChanged,
-                    onTap: onTap,
-                    readOnly: somenteLeitura,
-                    maxLines: maxLinhas,
-                    keyboardType: tipoTeclado,
-                    cursorColor: CoresApp.principal,
-                    style: const TextStyle(
-                      color: CoresApp.texto,
-                      fontSize: 15,
-                      fontWeight: FontWeight.w500,
-                      height: 1.35,
-                    ),
-                    decoration: InputDecoration(
-                      isDense: true,
-                      contentPadding: EdgeInsets.zero,
-                      border: InputBorder.none,
-                      hintText: dica,
-                      hintStyle: const TextStyle(
-                        color: CoresApp.textoSecundario,
-                        fontSize: 15,
-                        fontWeight: FontWeight.w400,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            if (iconeSufixo != null) ...[
-              const SizedBox(width: 8),
-              Icon(
-                iconeSufixo,
-                color: CoresApp.textoSecundario,
-                size: 22,
-              ),
-            ],
-          ],
-        ),
+    final tema = Theme.of(context);
+
+    return TextFormField(
+      controller: controller,
+      initialValue: controller == null ? valorInicial : null,
+      focusNode: focusNode,
+      enabled: habilitado,
+      readOnly: somenteLeitura,
+      autofocus: autofocus,
+      obscureText: ocultarTexto,
+      minLines: minLinhas,
+      maxLines: maxLinhas,
+      maxLength: maxCaracteres,
+      keyboardType: tipoTeclado,
+      textInputAction: acaoTeclado,
+      textCapitalization: capitalizacao,
+      inputFormatters: formatadores,
+      autovalidateMode: modoAutovalidacao,
+      validator: validator,
+      onChanged: onChanged,
+      onTap: onTap,
+      onEditingComplete: onEditingComplete,
+      onFieldSubmitted: onSubmitted,
+      cursorColor: tema.colorScheme.primary,
+      style: tema.textTheme.bodyLarge?.copyWith(fontWeight: FontWeight.w500),
+      decoration: InputDecoration(
+        labelText: rotulo,
+        hintText: dica,
+        errorText: textoErro,
+        floatingLabelBehavior: FloatingLabelBehavior.always,
+        alignLabelWithHint: maxLinhas > 1,
+        prefixIcon: iconePrefixo == null ? null : Icon(iconePrefixo),
+        suffixIcon: iconeSufixo == null ? null : Icon(iconeSufixo),
       ),
     );
   }

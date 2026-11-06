@@ -1,25 +1,19 @@
 import 'package:flutter/material.dart';
 import 'package:table_calendar/table_calendar.dart';
+import '../model/tarefa.dart';
 import '../tema/cores.dart';
 import '../widgets/card_tarefa.dart';
 
-/// Modelo auxiliar local para representar uma tarefa exibida na tela de Calendário.
-class _TarefaCalendario {
-  final String titulo;
-  final String horario;
-  final int duracaoMinutos;
-  final int? minutosUsados;
-  final PrioridadeTarefa prioridade;
-  StatusTarefa status;
+String _formatarHorario(HorarioTarefa? horario) {
+  if (horario == null) return 'Sem horário';
 
-  _TarefaCalendario({
-    required this.titulo,
-    required this.horario,
-    required this.duracaoMinutos,
-    this.minutosUsados,
-    required this.prioridade,
-    required this.status,
-  });
+  final hora = horario.hora.toString().padLeft(2, '0');
+  final minuto = horario.minuto.toString().padLeft(2, '0');
+  return '$hora:$minuto';
+}
+
+String _formatarDuracao(Duration? duracao) {
+  return duracao == null ? 'Sem estimativa' : '${duracao.inMinutes} min';
 }
 
 /// Calendário interativo e listagem de tarefas da data selecionada
@@ -71,7 +65,7 @@ class _TelaCalendarioState extends State<TelaCalendario> {
   DateTime _diaSelecionado = DateTime(2026, 10, 8);
 
   // Mapa de tarefas por data (normalizada ano/mês/dia) para demonstração e interação
-  late final Map<DateTime, List<_TarefaCalendario>> _tarefasPorDia;
+  late final Map<DateTime, List<Tarefa>> _tarefasPorDia;
 
   @override
   void initState() {
@@ -82,61 +76,68 @@ class _TelaCalendarioState extends State<TelaCalendario> {
   DateTime _normalizarData(DateTime data) =>
       DateTime(data.year, data.month, data.day);
 
-  Map<DateTime, List<_TarefaCalendario>> _criarDadosIniciais() {
-    final mapa = <DateTime, List<_TarefaCalendario>>{};
+  Map<DateTime, List<Tarefa>> _criarDadosIniciais() {
+    final mapa = <DateTime, List<Tarefa>>{};
 
     // Tarefas detalhadas do dia 8 de outubro de 2026 (conforme protótipo)
     mapa[DateTime(2026, 10, 8)] = [
-      _TarefaCalendario(
+      Tarefa(
         titulo: 'Organizar e-mails',
-        horario: '08:00',
-        duracaoMinutos: 20,
-        minutosUsados: 15,
+        data: DateTime(2026, 10, 8),
+        horario: HorarioTarefa(hora: 8, minuto: 0),
+        duracaoEstimada: const Duration(minutes: 20),
+        tempoRegistrado: const Duration(minutes: 15),
         prioridade: PrioridadeTarefa.baixa,
         status: StatusTarefa.concluida,
       ),
-      _TarefaCalendario(
+      Tarefa(
         titulo: 'Planejar o dia',
-        horario: '09:00',
-        duracaoMinutos: 15,
-        minutosUsados: 15,
+        data: DateTime(2026, 10, 8),
+        horario: HorarioTarefa(hora: 9, minuto: 0),
+        duracaoEstimada: const Duration(minutes: 15),
+        tempoRegistrado: const Duration(minutes: 15),
         prioridade: PrioridadeTarefa.baixa,
         status: StatusTarefa.concluida,
       ),
-      _TarefaCalendario(
+      Tarefa(
         titulo: 'Ler referências',
-        horario: '10:00',
-        duracaoMinutos: 30,
-        minutosUsados: 25,
+        data: DateTime(2026, 10, 8),
+        horario: HorarioTarefa(hora: 10, minuto: 0),
+        duracaoEstimada: const Duration(minutes: 30),
+        tempoRegistrado: const Duration(minutes: 25),
         prioridade: PrioridadeTarefa.media,
         status: StatusTarefa.concluida,
       ),
-      _TarefaCalendario(
+      Tarefa(
         titulo: 'Enviar relatório',
-        horario: '13:00',
-        duracaoMinutos: 30,
+        data: DateTime(2026, 10, 8),
+        horario: HorarioTarefa(hora: 13, minuto: 0),
+        duracaoEstimada: const Duration(minutes: 30),
         prioridade: PrioridadeTarefa.alta,
         status: StatusTarefa.atrasada,
       ),
-      _TarefaCalendario(
+      Tarefa(
         titulo: 'Revisar apresentação',
-        horario: '14:00',
-        duracaoMinutos: 45,
-        minutosUsados: 20,
+        data: DateTime(2026, 10, 8),
+        horario: HorarioTarefa(hora: 14, minuto: 0),
+        duracaoEstimada: const Duration(minutes: 45),
+        tempoRegistrado: const Duration(minutes: 20),
         prioridade: PrioridadeTarefa.alta,
         status: StatusTarefa.pausada,
       ),
-      _TarefaCalendario(
+      Tarefa(
         titulo: 'Consulta médica',
-        horario: '16:00',
-        duracaoMinutos: 45,
+        data: DateTime(2026, 10, 8),
+        horario: HorarioTarefa(hora: 16, minuto: 0),
+        duracaoEstimada: const Duration(minutes: 45),
         prioridade: PrioridadeTarefa.media,
         status: StatusTarefa.pendente,
       ),
-      _TarefaCalendario(
+      Tarefa(
         titulo: 'Estudar Flutter',
-        horario: '19:00',
-        duracaoMinutos: 60,
+        data: DateTime(2026, 10, 8),
+        horario: HorarioTarefa(hora: 19, minuto: 0),
+        duracaoEstimada: const Duration(minutes: 60),
         prioridade: PrioridadeTarefa.baixa,
         status: StatusTarefa.pendente,
       ),
@@ -146,18 +147,20 @@ class _TelaCalendarioState extends State<TelaCalendario> {
     const diasComTarefas = [5, 6, 7, 12, 14, 16, 19, 21, 23, 26, 28];
     for (final dia in diasComTarefas) {
       mapa[DateTime(2026, 10, dia)] = [
-        _TarefaCalendario(
+        Tarefa(
           titulo: 'Planejamento de estudos',
-          horario: '09:00',
-          duracaoMinutos: 45,
+          data: DateTime(2026, 10, dia),
+          horario: HorarioTarefa(hora: 9, minuto: 0),
+          duracaoEstimada: const Duration(minutes: 45),
           prioridade: PrioridadeTarefa.media,
           status: StatusTarefa.pendente,
         ),
-        _TarefaCalendario(
+        Tarefa(
           titulo: 'Revisão da Sprint FlowTask',
-          horario: '14:00',
-          duracaoMinutos: 30,
-          minutosUsados: 30,
+          data: DateTime(2026, 10, dia),
+          horario: HorarioTarefa(hora: 14, minuto: 0),
+          duracaoEstimada: const Duration(minutes: 30),
+          tempoRegistrado: const Duration(minutes: 30),
           prioridade: PrioridadeTarefa.alta,
           status: StatusTarefa.concluida,
         ),
@@ -167,17 +170,23 @@ class _TelaCalendarioState extends State<TelaCalendario> {
     return mapa;
   }
 
-  List<_TarefaCalendario> _obterTarefasDoDia(DateTime dia) {
+  List<Tarefa> _obterTarefasDoDia(DateTime dia) {
     return _tarefasPorDia[_normalizarData(dia)] ?? [];
   }
 
-  void _alternarStatusTarefa(_TarefaCalendario tarefa) {
+  void _alternarStatusTarefa(Tarefa tarefa) {
     setState(() {
-      if (tarefa.status == StatusTarefa.concluida) {
-        tarefa.status = StatusTarefa.pendente;
-      } else {
-        tarefa.status = StatusTarefa.concluida;
-      }
+      final data = _normalizarData(tarefa.data);
+      final tarefas = _tarefasPorDia[data];
+      if (tarefas == null) return;
+
+      final indice = tarefas.indexOf(tarefa);
+      if (indice < 0) return;
+
+      final novoStatus = tarefa.status == StatusTarefa.concluida
+          ? StatusTarefa.pendente
+          : StatusTarefa.concluida;
+      tarefas[indice] = tarefa.copiarComStatus(novoStatus);
     });
   }
 
@@ -192,15 +201,19 @@ class _TelaCalendarioState extends State<TelaCalendario> {
     return '$diaSemana, ${data.day} de $mes';
   }
 
-  String _construirResumoContagem(List<_TarefaCalendario> tarefas) {
-    final concluidas =
-        tarefas.where((t) => t.status == StatusTarefa.concluida).length;
-    final pendentes =
-        tarefas.where((t) => t.status == StatusTarefa.pendente).length;
-    final pausadas =
-        tarefas.where((t) => t.status == StatusTarefa.pausada).length;
-    final atrasadas =
-        tarefas.where((t) => t.status == StatusTarefa.atrasada).length;
+  String _construirResumoContagem(List<Tarefa> tarefas) {
+    final concluidas = tarefas
+        .where((t) => t.status == StatusTarefa.concluida)
+        .length;
+    final pendentes = tarefas
+        .where((t) => t.status == StatusTarefa.pendente)
+        .length;
+    final pausadas = tarefas
+        .where((t) => t.status == StatusTarefa.pausada)
+        .length;
+    final atrasadas = tarefas
+        .where((t) => t.status == StatusTarefa.atrasada)
+        .length;
 
     final partes = <String>[];
     if (concluidas > 0) {
@@ -231,7 +244,7 @@ class _TelaCalendarioState extends State<TelaCalendario> {
 
     final int totalMinutosRealizados = tarefasConcluidas.fold(
       0,
-      (soma, t) => soma + (t.minutosUsados ?? t.duracaoMinutos),
+      (soma, t) => soma + t.tempoRegistrado.inMinutes,
     );
 
     return Scaffold(
@@ -252,7 +265,7 @@ class _TelaCalendarioState extends State<TelaCalendario> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  TableCalendar<_TarefaCalendario>(
+                  TableCalendar<Tarefa>(
                     firstDay: DateTime(2020, 1, 1),
                     lastDay: DateTime(2030, 12, 31),
                     focusedDay: _mesFocado,
@@ -434,10 +447,10 @@ class _TelaCalendarioState extends State<TelaCalendario> {
                   padding: const EdgeInsets.only(bottom: 12),
                   child: CardTarefa(
                     titulo: tarefa.titulo,
-                    horario: tarefa.horario,
-                    duracaoEstimada: '${tarefa.duracaoMinutos} min',
-                    tempoUsado: tarefa.minutosUsados != null
-                        ? '${tarefa.minutosUsados} min usados'
+                    horario: _formatarHorario(tarefa.horario),
+                    duracaoEstimada: _formatarDuracao(tarefa.duracaoEstimada),
+                    tempoUsado: tarefa.tempoRegistrado > Duration.zero
+                        ? '${tarefa.tempoRegistrado.inMinutes} min usados'
                         : null,
                     prioridade: tarefa.prioridade,
                     status: tarefa.status,
@@ -535,7 +548,7 @@ class _TelaCalendarioState extends State<TelaCalendario> {
 /// Card compacto verde para exibição das tarefas concluídas na tela de Calendário
 /// conforme o protótipo `Design/Calendário.jpg`.
 class _CardTarefaConcluidaCompacto extends StatelessWidget {
-  final _TarefaCalendario tarefa;
+  final Tarefa tarefa;
   final VoidCallback onAlternarStatus;
 
   const _CardTarefaConcluidaCompacto({
@@ -545,7 +558,7 @@ class _CardTarefaConcluidaCompacto extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final int minutosExibidos = tarefa.minutosUsados ?? tarefa.duracaoMinutos;
+    final int minutosExibidos = tarefa.tempoRegistrado.inMinutes;
 
     return Material(
       color: CoresApp.concluidaFundo,
@@ -562,10 +575,7 @@ class _CardTarefaConcluidaCompacto extends StatelessWidget {
                 height: 24,
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
-                  border: Border.all(
-                    color: CoresApp.concluida,
-                    width: 1.8,
-                  ),
+                  border: Border.all(color: CoresApp.concluida, width: 1.8),
                 ),
                 child: const Icon(
                   Icons.check_rounded,
@@ -588,7 +598,7 @@ class _CardTarefaConcluidaCompacto extends StatelessWidget {
                     ),
                     const SizedBox(height: 2),
                     Text(
-                      '${tarefa.horario} · Concluída',
+                      '${_formatarHorario(tarefa.horario)} · Concluída',
                       style: const TextStyle(
                         color: CoresApp.concluida,
                         fontSize: 13,

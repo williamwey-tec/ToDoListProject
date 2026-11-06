@@ -7,6 +7,8 @@ class IndicadorProgresso extends StatelessWidget {
   final int totalTarefas;
   final String tempoPlanejado;
   final String tempoRealizado;
+  final String rotuloPlanejado;
+  final String rotuloRealizado;
 
   const IndicadorProgresso({
     super.key,
@@ -14,10 +16,15 @@ class IndicadorProgresso extends StatelessWidget {
     required this.totalTarefas,
     required this.tempoPlanejado,
     required this.tempoRealizado,
-  });
+    this.rotuloPlanejado = 'Planejado',
+    this.rotuloRealizado = 'Realizado',
+  }) : assert(tarefasConcluidas >= 0),
+       assert(totalTarefas >= 0),
+       assert(tarefasConcluidas <= totalTarefas);
 
   @override
   Widget build(BuildContext context) {
+    final tema = Theme.of(context);
     final double progresso = totalTarefas > 0
         ? (tarefasConcluidas / totalTarefas).clamp(0.0, 1.0)
         : 0.0;
@@ -34,23 +41,23 @@ class IndicadorProgresso extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         mainAxisSize: MainAxisSize.min,
         children: [
-          // Linha superior: contagem de tarefas e percentual
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          // Quebra em telas estreitas e com fontes ampliadas.
+          Wrap(
+            alignment: WrapAlignment.spaceBetween,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            spacing: 16,
+            runSpacing: 4,
             children: [
               Text(
                 '$tarefasConcluidas de $totalTarefas tarefas concluídas',
-                style: const TextStyle(
-                  color: CoresApp.texto,
-                  fontSize: 17,
+                style: tema.textTheme.titleMedium?.copyWith(
                   fontWeight: FontWeight.w700,
                 ),
               ),
               Text(
                 '$percentual%',
-                style: const TextStyle(
-                  color: CoresApp.principal,
-                  fontSize: 15,
+                style: tema.textTheme.titleMedium?.copyWith(
+                  color: tema.colorScheme.primary,
                   fontWeight: FontWeight.w700,
                 ),
               ),
@@ -61,70 +68,81 @@ class IndicadorProgresso extends StatelessWidget {
           // Barra de progresso horizontal
           ClipRRect(
             borderRadius: BorderRadius.circular(8),
-            child: LinearProgressIndicator(
-              value: progresso,
-              minHeight: 8,
-              backgroundColor: CoresApp.borda,
-              valueColor: const AlwaysStoppedAnimation<Color>(CoresApp.principal),
-            ),
+            child: LinearProgressIndicator(value: progresso, minHeight: 8),
           ),
           const SizedBox(height: 16),
 
-          // Linha inferior: tempo planejado e tempo realizado
-          Row(
-            children: [
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text(
-                      'Planejado',
-                      style: TextStyle(
-                        color: CoresApp.textoSecundario,
-                        fontSize: 13,
-                        fontWeight: FontWeight.w500,
-                      ),
+          LayoutBuilder(
+            builder: (context, constraints) {
+              const espacamento = 24.0;
+              final duasColunas = constraints.maxWidth >= 240;
+              final larguraMetrica = duasColunas
+                  ? (constraints.maxWidth - espacamento) / 2
+                  : constraints.maxWidth;
+
+              return Wrap(
+                spacing: espacamento,
+                runSpacing: 12,
+                children: [
+                  SizedBox(
+                    width: larguraMetrica,
+                    child: _MetricaProgresso(
+                      rotulo: rotuloPlanejado,
+                      valor: tempoPlanejado,
+                      corValor: tema.colorScheme.onSurface,
                     ),
-                    const SizedBox(height: 4),
-                    Text(
-                      tempoPlanejado,
-                      style: const TextStyle(
-                        color: CoresApp.texto,
-                        fontSize: 20,
-                        fontWeight: FontWeight.w800,
-                      ),
+                  ),
+                  SizedBox(
+                    width: larguraMetrica,
+                    child: _MetricaProgresso(
+                      rotulo: rotuloRealizado,
+                      valor: tempoRealizado,
+                      corValor: tema.colorScheme.primary,
                     ),
-                  ],
-                ),
-              ),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text(
-                      'Realizado',
-                      style: TextStyle(
-                        color: CoresApp.textoSecundario,
-                        fontSize: 13,
-                        fontWeight: FontWeight.w500,
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      tempoRealizado,
-                      style: const TextStyle(
-                        color: CoresApp.principal,
-                        fontSize: 20,
-                        fontWeight: FontWeight.w800,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
+                  ),
+                ],
+              );
+            },
           ),
         ],
       ),
+    );
+  }
+}
+
+class _MetricaProgresso extends StatelessWidget {
+  final String rotulo;
+  final String valor;
+  final Color corValor;
+
+  const _MetricaProgresso({
+    required this.rotulo,
+    required this.valor,
+    required this.corValor,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final tema = Theme.of(context);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          rotulo,
+          style: tema.textTheme.bodySmall?.copyWith(
+            fontWeight: FontWeight.w500,
+          ),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          valor,
+          style: tema.textTheme.titleLarge?.copyWith(
+            color: corValor,
+            fontWeight: FontWeight.w800,
+          ),
+        ),
+      ],
     );
   }
 }

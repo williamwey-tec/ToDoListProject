@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import '../tema/cores.dart';
 
 /// Variações visuais do botão reutilizável do FlowTask.
 enum TipoBotao {
@@ -20,6 +19,8 @@ class Botao extends StatelessWidget {
   final IconData? icone;
   final TipoBotao tipo;
   final bool larguraTotal;
+  final bool carregando;
+  final String? textoCarregando;
 
   const Botao({
     super.key,
@@ -28,32 +29,43 @@ class Botao extends StatelessWidget {
     this.icone,
     this.tipo = TipoBotao.primario,
     this.larguraTotal = true,
+    this.carregando = false,
+    this.textoCarregando,
   });
 
   @override
   Widget build(BuildContext context) {
+    final tema = Theme.of(context);
+    final cores = tema.colorScheme;
+    final bool disponivel = onPressed != null && !carregando;
+    final VoidCallback? callbackBotao = carregando ? () {} : onPressed;
     final Color corFundo;
     final Color corTexto;
     final BorderSide borda;
 
     switch (tipo) {
       case TipoBotao.primario:
-        corFundo = CoresApp.principal;
-        corTexto = CoresApp.sobrePrincipal;
+        corFundo = cores.primary;
+        corTexto = cores.onPrimary;
         borda = BorderSide.none;
       case TipoBotao.secundario:
-        corFundo = CoresApp.pendenteFundo;
-        corTexto = CoresApp.pendente;
+        corFundo = cores.primaryContainer;
+        corTexto = cores.onPrimaryContainer;
         borda = BorderSide.none;
       case TipoBotao.contorno:
-        corFundo = CoresApp.superficie;
-        corTexto = CoresApp.principal;
-        borda = const BorderSide(color: CoresApp.borda, width: 1.2);
+        corFundo = cores.surface;
+        corTexto = cores.primary;
+        borda = BorderSide(color: cores.outlineVariant, width: 1.2);
     }
 
     final estilo = ElevatedButton.styleFrom(
       backgroundColor: corFundo,
       foregroundColor: corTexto,
+      disabledBackgroundColor: tema.elevatedButtonTheme.style?.backgroundColor
+          ?.resolve(const {WidgetState.disabled}),
+      disabledForegroundColor: tema.elevatedButtonTheme.style?.foregroundColor
+          ?.resolve(const {WidgetState.disabled}),
+      minimumSize: const Size(48, 52),
       elevation: 0,
       shadowColor: Colors.transparent,
       padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
@@ -61,30 +73,58 @@ class Botao extends StatelessWidget {
         borderRadius: BorderRadius.circular(30),
         side: borda,
       ),
-      textStyle: const TextStyle(
-        fontSize: 16,
-        fontWeight: FontWeight.w600,
+      textStyle: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+    );
+
+    final Widget conteudo = AnimatedSwitcher(
+      duration: const Duration(milliseconds: 180),
+      child: carregando
+          ? Wrap(
+              key: const ValueKey('carregando'),
+              alignment: WrapAlignment.center,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              spacing: 10,
+              runSpacing: 6,
+              children: [
+                SizedBox.square(
+                  dimension: 20,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2.4,
+                    color: corTexto,
+                  ),
+                ),
+                Text(textoCarregando ?? texto, textAlign: TextAlign.center),
+              ],
+            )
+          : Wrap(
+              key: const ValueKey('normal'),
+              alignment: WrapAlignment.center,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              spacing: 10,
+              runSpacing: 6,
+              children: [
+                if (icone != null) Icon(icone, size: 22),
+                Text(texto, textAlign: TextAlign.center),
+              ],
+            ),
+    );
+
+    final Widget botao = Semantics(
+      button: true,
+      enabled: disponivel,
+      liveRegion: carregando,
+      label: carregando ? (textoCarregando ?? 'Carregando $texto') : texto,
+      onTap: disponivel ? onPressed : null,
+      excludeSemantics: true,
+      child: ElevatedButton(
+        onPressed: callbackBotao,
+        style: estilo,
+        child: conteudo,
       ),
     );
 
-    final Widget botao = icone != null
-        ? ElevatedButton.icon(
-            onPressed: onPressed,
-            style: estilo,
-            icon: Icon(icone, size: 22, color: corTexto),
-            label: Text(texto),
-          )
-        : ElevatedButton(
-            onPressed: onPressed,
-            style: estilo,
-            child: Text(texto),
-          );
-
     if (larguraTotal) {
-      return SizedBox(
-        width: double.infinity,
-        child: botao,
-      );
+      return SizedBox(width: double.infinity, child: botao);
     }
 
     return botao;

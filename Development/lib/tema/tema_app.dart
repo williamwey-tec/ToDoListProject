@@ -8,22 +8,26 @@ class TemaApp {
   static final ThemeData claro = ThemeData(
     useMaterial3: true,
 
-    colorScheme: ColorScheme.fromSeed(
-      seedColor: CoresApp.principal,
-      brightness: Brightness.light,
-    ).copyWith(
-      primary: CoresApp.principal,
-      onPrimary: CoresApp.sobrePrincipal,
-      primaryContainer: CoresApp.principalSuave,
-      onPrimaryContainer: CoresApp.principal,
-      surface: CoresApp.superficie,
-      onSurface: CoresApp.texto,
-      onSurfaceVariant: CoresApp.textoSecundario,
-      outlineVariant: CoresApp.borda,
-      error: CoresApp.erro,
-    ),
+    colorScheme:
+        ColorScheme.fromSeed(
+          seedColor: CoresApp.principal,
+          brightness: Brightness.light,
+        ).copyWith(
+          primary: CoresApp.principal,
+          onPrimary: CoresApp.sobrePrincipal,
+          primaryContainer: CoresApp.principalSuave,
+          onPrimaryContainer: CoresApp.principal,
+          surface: CoresApp.superficie,
+          onSurface: CoresApp.texto,
+          onSurfaceVariant: CoresApp.textoSecundario,
+          outline: CoresApp.borda,
+          outlineVariant: CoresApp.borda,
+          error: CoresApp.erro,
+          onError: CoresApp.sobrePrincipal,
+        ),
 
     scaffoldBackgroundColor: CoresApp.fundo,
+    disabledColor: CoresApp.desabilitado,
 
     // Barra superior das páginas.
     appBarTheme: const AppBarTheme(
@@ -51,18 +55,9 @@ class TemaApp {
         fontWeight: FontWeight.w600,
         color: CoresApp.texto,
       ),
-      bodyLarge: TextStyle(
-        fontSize: 16,
-        color: CoresApp.texto,
-      ),
-      bodyMedium: TextStyle(
-        fontSize: 14,
-        color: CoresApp.texto,
-      ),
-      bodySmall: TextStyle(
-        fontSize: 12,
-        color: CoresApp.textoSecundario,
-      ),
+      bodyLarge: TextStyle(fontSize: 16, color: CoresApp.texto),
+      bodyMedium: TextStyle(fontSize: 14, color: CoresApp.texto),
+      bodySmall: TextStyle(fontSize: 12, color: CoresApp.textoSecundario),
     ),
 
     // Padrão dos botões principais.
@@ -70,19 +65,13 @@ class TemaApp {
       style: ElevatedButton.styleFrom(
         backgroundColor: CoresApp.principal,
         foregroundColor: CoresApp.sobrePrincipal,
+        disabledBackgroundColor: CoresApp.desabilitadoFundo,
+        disabledForegroundColor: CoresApp.desabilitado,
         minimumSize: const Size(48, 52),
-        padding: const EdgeInsets.symmetric(
-          horizontal: 24,
-          vertical: 14,
-        ),
-        textStyle: const TextStyle(
-          fontSize: 16,
-          fontWeight: FontWeight.w600,
-        ),
+        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
+        textStyle: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
         elevation: 0,
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(28),
-        ),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(28)),
       ),
     ),
 
@@ -91,19 +80,33 @@ class TemaApp {
       filled: true,
       fillColor: CoresApp.superficie,
       contentPadding: const EdgeInsets.all(16),
-      border: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(16),
+      labelStyle: const TextStyle(
+        color: CoresApp.textoSecundario,
+        fontSize: 14,
+        fontWeight: FontWeight.w500,
       ),
+      floatingLabelStyle: const TextStyle(
+        color: CoresApp.principal,
+        fontSize: 14,
+        fontWeight: FontWeight.w600,
+      ),
+      hintStyle: const TextStyle(
+        color: CoresApp.textoSecundario,
+        fontWeight: FontWeight.w400,
+      ),
+      errorStyle: const TextStyle(
+        color: CoresApp.erro,
+        fontSize: 12,
+        fontWeight: FontWeight.w500,
+      ),
+      border: OutlineInputBorder(borderRadius: BorderRadius.circular(16)),
       enabledBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(16),
         borderSide: const BorderSide(color: CoresApp.borda),
       ),
       focusedBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(16),
-        borderSide: const BorderSide(
-          color: CoresApp.principal,
-          width: 2,
-        ),
+        borderSide: const BorderSide(color: CoresApp.principal, width: 2),
       ),
       errorBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(16),
@@ -111,10 +114,11 @@ class TemaApp {
       ),
       focusedErrorBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(16),
-        borderSide: const BorderSide(
-          color: CoresApp.erro,
-          width: 2,
-        ),
+        borderSide: const BorderSide(color: CoresApp.erro, width: 2),
+      ),
+      disabledBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(16),
+        borderSide: const BorderSide(color: CoresApp.borda),
       ),
     ),
 
@@ -139,7 +143,7 @@ class TemaApp {
 
     progressIndicatorTheme: const ProgressIndicatorThemeData(
       color: CoresApp.principal,
-      linearTrackColor: CoresApp.principalSuave,
+      linearTrackColor: CoresApp.borda,
     ),
   );
 }

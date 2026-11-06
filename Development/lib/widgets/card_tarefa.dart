@@ -1,20 +1,6 @@
 import 'package:flutter/material.dart';
+import '../model/tarefa.dart';
 import '../tema/cores.dart';
-
-/// Níveis de prioridade de uma tarefa no FlowTask.
-enum PrioridadeTarefa {
-  baixa,
-  media,
-  alta,
-}
-
-/// Estados de andamento de uma tarefa no FlowTask.
-enum StatusTarefa {
-  pendente,
-  concluida,
-  atrasada,
-  pausada,
-}
 
 /// Cartão com os dados, badges de prioridade/status e ações de uma tarefa.
 class CardTarefa extends StatelessWidget {
@@ -26,6 +12,8 @@ class CardTarefa extends StatelessWidget {
   final StatusTarefa status;
   final VoidCallback? onTap;
   final VoidCallback? onAlternarStatus;
+  final bool exibirPrioridade;
+  final bool exibirStatus;
 
   const CardTarefa({
     super.key,
@@ -37,10 +25,13 @@ class CardTarefa extends StatelessWidget {
     this.status = StatusTarefa.pendente,
     this.onTap,
     this.onAlternarStatus,
+    this.exibirPrioridade = true,
+    this.exibirStatus = true,
   });
 
   @override
   Widget build(BuildContext context) {
+    final tema = Theme.of(context);
     final bool isPausada = status == StatusTarefa.pausada;
     final bool isConcluida = status == StatusTarefa.concluida;
 
@@ -62,12 +53,22 @@ class CardTarefa extends StatelessWidget {
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.center,
             children: [
-              // Ícone lateral de status (check verde, pause roxo ou círculo vazio)
-              GestureDetector(
-                onTap: onAlternarStatus,
-                child: _construirIconeStatus(),
+              // Controle com área de toque mínima de 48 x 48.
+              Semantics(
+                button: onAlternarStatus != null,
+                label: _rotuloAcaoStatus,
+                child: IconButton(
+                  onPressed: onAlternarStatus,
+                  tooltip: onAlternarStatus == null ? null : _rotuloAcaoStatus,
+                  padding: const EdgeInsets.all(10),
+                  constraints: const BoxConstraints(
+                    minWidth: 48,
+                    minHeight: 48,
+                  ),
+                  icon: _construirIconeStatus(),
+                ),
               ),
-              const SizedBox(width: 14),
+              const SizedBox(width: 8),
 
               // Conteúdo principal do card
               Expanded(
@@ -75,25 +76,25 @@ class CardTarefa extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    // Linha de horário + duração e tempo usado à direita
+                    // Os textos podem ocupar mais de uma linha sem overflow.
                     Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
-                        Text(
-                          '$horario · $duracaoEstimada',
-                          style: const TextStyle(
-                            color: CoresApp.textoSecundario,
-                            fontSize: 13,
-                            fontWeight: FontWeight.w500,
+                        Expanded(
+                          child: Text(
+                            '$horario · $duracaoEstimada',
+                            style: tema.textTheme.bodySmall?.copyWith(
+                              fontWeight: FontWeight.w500,
+                            ),
                           ),
                         ),
                         if (tempoUsado != null && tempoUsado!.isNotEmpty)
-                          Text(
-                            tempoUsado!,
-                            style: const TextStyle(
-                              color: CoresApp.textoSecundario,
-                              fontSize: 13,
-                              fontWeight: FontWeight.w500,
+                          Expanded(
+                            child: Text(
+                              tempoUsado!,
+                              textAlign: TextAlign.end,
+                              style: tema.textTheme.bodySmall?.copyWith(
+                                fontWeight: FontWeight.w500,
+                              ),
                             ),
                           ),
                       ],
@@ -103,26 +104,27 @@ class CardTarefa extends StatelessWidget {
                     // Título da tarefa
                     Text(
                       titulo,
-                      style: TextStyle(
+                      style: tema.textTheme.titleMedium?.copyWith(
                         color: isConcluida
-                            ? CoresApp.textoSecundario
-                            : CoresApp.texto,
-                        fontSize: 16,
+                            ? tema.colorScheme.onSurfaceVariant
+                            : tema.colorScheme.onSurface,
                         fontWeight: FontWeight.w700,
                       ),
                     ),
-                    const SizedBox(height: 8),
+                    if (exibirPrioridade || exibirStatus)
+                      const SizedBox(height: 8),
 
                     // Badges de Prioridade e Status
-                    Wrap(
-                      spacing: 8,
-                      runSpacing: 6,
-                      crossAxisAlignment: WrapCrossAlignment.center,
-                      children: [
-                        _construirBadgePrioridade(),
-                        _construirBadgeStatus(),
-                      ],
-                    ),
+                    if (exibirPrioridade || exibirStatus)
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 6,
+                        crossAxisAlignment: WrapCrossAlignment.center,
+                        children: [
+                          if (exibirPrioridade) _construirBadgePrioridade(),
+                          if (exibirStatus) _construirBadgeStatus(),
+                        ],
+                      ),
                   ],
                 ),
               ),
@@ -132,6 +134,10 @@ class CardTarefa extends StatelessWidget {
       ),
     );
   }
+
+  String get _rotuloAcaoStatus => status == StatusTarefa.concluida
+      ? 'Marcar tarefa como pendente'
+      : 'Marcar tarefa como concluída';
 
   Widget _construirIconeStatus() {
     switch (status) {
@@ -170,10 +176,7 @@ class CardTarefa extends StatelessWidget {
           height: 28,
           decoration: BoxDecoration(
             shape: BoxShape.circle,
-            border: Border.all(
-              color: CoresApp.pendente,
-              width: 1.8,
-            ),
+            border: Border.all(color: CoresApp.pendente, width: 1.8),
           ),
         );
     }
@@ -199,11 +202,7 @@ class CardTarefa extends StatelessWidget {
         corTexto = CoresApp.prioridadeAlta;
     }
 
-    return _Badge(
-      texto: texto,
-      corFundo: corFundo,
-      corTexto: corTexto,
-    );
+    return _Badge(texto: texto, corFundo: corFundo, corTexto: corTexto);
   }
 
   Widget _construirBadgeStatus() {
