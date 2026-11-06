@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:table_calendar/table_calendar.dart';
 import '../tema/cores.dart';
 import '../widgets/card_tarefa.dart';
-import 'tela_tarefa.dart';
 
 /// Modelo auxiliar local para representar uma tarefa exibida na tela de Calendário.
 class _TarefaCalendario {
@@ -242,58 +241,6 @@ class _TelaCalendarioState extends State<TelaCalendario> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Cabeçalho da tela de Calendário
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              crossAxisAlignment: CrossAxisAlignment.center,
-              children: [
-                const Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'Calendário',
-                      style: TextStyle(
-                        color: CoresApp.texto,
-                        fontSize: 28,
-                        fontWeight: FontWeight.w800,
-                        letterSpacing: -0.5,
-                      ),
-                    ),
-                    SizedBox(height: 2),
-                    Text(
-                      'Um dia de cada vez',
-                      style: TextStyle(
-                        color: CoresApp.textoSecundario,
-                        fontSize: 14,
-                        fontWeight: FontWeight.w500,
-                      ),
-                    ),
-                  ],
-                ),
-                IconButton(
-                  onPressed: () {
-                    Navigator.of(context).push(
-                      MaterialPageRoute(
-                        builder: (_) => const TelaTarefa(),
-                      ),
-                    );
-                  },
-                  style: IconButton.styleFrom(
-                    backgroundColor: CoresApp.principalSuave,
-                    fixedSize: const Size(46, 46),
-                    shape: const CircleBorder(),
-                  ),
-                  icon: const Icon(
-                    Icons.add_rounded,
-                    color: CoresApp.principal,
-                    size: 26,
-                  ),
-                  tooltip: 'Nova tarefa',
-                ),
-              ],
-            ),
-            const SizedBox(height: 20),
-
             // Card do Calendário Mensal
             Container(
               padding: const EdgeInsets.fromLTRB(12, 8, 12, 16),

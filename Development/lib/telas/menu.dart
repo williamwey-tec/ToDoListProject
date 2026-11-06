@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+
 import '../tema/cores.dart';
 import 'tela_calendario.dart';
 import 'tela_foco.dart';
@@ -7,21 +8,25 @@ import 'tela_notificacoes.dart';
 import 'tela_perfil.dart';
 import 'tela_tarefa.dart';
 
-/// Item de navegação do menu expansivo (Drawer).
-class _ItemMenu {
+class _DestinoPrincipal {
+  final String rotulo;
   final String titulo;
+  final String subtitulo;
   final IconData icone;
+  final IconData iconeSelecionado;
   final Widget tela;
 
-  const _ItemMenu({
+  const _DestinoPrincipal({
+    required this.rotulo,
     required this.titulo,
+    required this.subtitulo,
     required this.icone,
+    required this.iconeSelecionado,
     required this.tela,
   });
 }
 
-/// Navegação principal entre Hoje, Calendário, Foco, Notificações e Perfil
-/// utilizando o menu expansivo lateral (ícone de 3 riscos no canto superior esquerdo).
+/// Contêiner da navegação principal do FlowTask.
 class Menu extends StatefulWidget {
   const Menu({super.key});
 
@@ -32,90 +37,101 @@ class Menu extends StatefulWidget {
 class _MenuState extends State<Menu> {
   int _indiceSelecionado = 0;
 
-  static const List<_ItemMenu> _itens = [
-    _ItemMenu(
+  static const List<_DestinoPrincipal> _destinos = [
+    _DestinoPrincipal(
+      rotulo: 'Hoje',
       titulo: 'Hoje',
-      icone: Icons.checklist_rounded,
+      subtitulo: 'Planeje um dia de cada vez',
+      icone: Icons.checklist_outlined,
+      iconeSelecionado: Icons.checklist_rounded,
       tela: TelaHoje(),
     ),
-    _ItemMenu(
+    _DestinoPrincipal(
+      rotulo: 'Calendário',
       titulo: 'Calendário',
+      subtitulo: 'Um dia de cada vez',
       icone: Icons.calendar_today_outlined,
+      iconeSelecionado: Icons.calendar_today_rounded,
       tela: TelaCalendario(),
     ),
-    _ItemMenu(
-      titulo: 'Foco',
+    _DestinoPrincipal(
+      rotulo: 'Foco',
+      titulo: 'Modo Foco',
+      subtitulo: 'Menos distrações. Mais presença.',
       icone: Icons.timer_outlined,
+      iconeSelecionado: Icons.timer_rounded,
       tela: TelaFoco(),
     ),
-    _ItemMenu(
-      titulo: 'Notificações',
-      icone: Icons.notifications_none_rounded,
-      tela: TelaNotificacoes(),
-    ),
-    _ItemMenu(
+    _DestinoPrincipal(
+      rotulo: 'Perfil',
       titulo: 'Perfil',
+      subtitulo: 'Seu espaço no FlowTask',
       icone: Icons.person_outline_rounded,
+      iconeSelecionado: Icons.person_rounded,
       tela: TelaPerfil(),
     ),
   ];
 
-  void _selecionarItem(int indice) {
-    setState(() {
-      _indiceSelecionado = indice;
-    });
-    Navigator.of(context).pop(); // Fecha o menu expansivo após selecionar
+  void _abrirNovaTarefa() {
+    Navigator.of(
+      context,
+    ).push(MaterialPageRoute<void>(builder: (_) => const TelaTarefa()));
   }
 
-  void _abrirNovaTarefa() {
-    Navigator.of(context).pop();
-    Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => const TelaTarefa(),
-      ),
-    );
+  void _abrirNotificacoes() {
+    Navigator.of(
+      context,
+    ).push(MaterialPageRoute<void>(builder: (_) => const TelaNotificacoes()));
   }
 
   @override
   Widget build(BuildContext context) {
-    final itemAtual = _itens[_indiceSelecionado];
+    final destinoAtual = _destinos[_indiceSelecionado];
+    final permiteNovaTarefa =
+        _indiceSelecionado == 0 || _indiceSelecionado == 1;
 
     return Scaffold(
       backgroundColor: CoresApp.fundo,
       appBar: AppBar(
-        backgroundColor: CoresApp.fundo,
-        elevation: 0,
-        scrolledUnderElevation: 0,
-        centerTitle: false,
-        // Ícone de 3 riscos (hambúrguer) no canto superior esquerdo
-        leading: Builder(
-          builder: (context) => IconButton(
-            icon: const Icon(
-              Icons.menu_rounded,
-              color: CoresApp.texto,
-              size: 28,
+        toolbarHeight: 76,
+        title: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              destinoAtual.titulo,
+              style: const TextStyle(
+                color: CoresApp.texto,
+                fontSize: 24,
+                fontWeight: FontWeight.w800,
+                letterSpacing: -0.4,
+              ),
             ),
-            tooltip: 'Abrir menu de navegação',
-            onPressed: () => Scaffold.of(context).openDrawer(),
-          ),
-        ),
-        title: Text(
-          itemAtual.titulo,
-          style: const TextStyle(
-            color: CoresApp.texto,
-            fontSize: 20,
-            fontWeight: FontWeight.w700,
-          ),
+            Text(
+              destinoAtual.subtitulo,
+              style: const TextStyle(
+                color: CoresApp.textoSecundario,
+                fontSize: 13,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          ],
         ),
         actions: [
+          if (permiteNovaTarefa)
+            IconButton(
+              onPressed: _abrirNovaTarefa,
+              style: IconButton.styleFrom(
+                backgroundColor: CoresApp.principalSuave,
+                shape: const CircleBorder(),
+              ),
+              icon: const Icon(Icons.add_rounded, color: CoresApp.principal),
+              tooltip: 'Nova tarefa',
+            ),
           Padding(
-            padding: const EdgeInsets.only(right: 12),
+            padding: const EdgeInsets.only(left: 4, right: 12),
             child: IconButton(
-              onPressed: () {
-                setState(() {
-                  _indiceSelecionado = 3; // Aba de Notificações
-                });
-              },
+              onPressed: _abrirNotificacoes,
               style: IconButton.styleFrom(
                 backgroundColor: CoresApp.principalSuave,
                 shape: const CircleBorder(),
@@ -129,155 +145,26 @@ class _MenuState extends State<Menu> {
           ),
         ],
       ),
-      drawer: Drawer(
-        backgroundColor: CoresApp.superficie,
-        shape: const RoundedRectangleBorder(
-          borderRadius: BorderRadius.only(
-            topRight: Radius.circular(24),
-            bottomRight: Radius.circular(24),
-          ),
-        ),
-        child: SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                // Cabeçalho do Menu Expansivo
-                Container(
-                  padding: const EdgeInsets.all(16),
-                  decoration: BoxDecoration(
-                    color: CoresApp.principalSuave,
-                    borderRadius: BorderRadius.circular(16),
-                  ),
-                  child: Row(
-                    children: [
-                      Container(
-                        width: 44,
-                        height: 44,
-                        decoration: const BoxDecoration(
-                          color: CoresApp.principal,
-                          shape: BoxShape.circle,
-                        ),
-                        child: const Icon(
-                          Icons.bolt_rounded,
-                          color: CoresApp.sobrePrincipal,
-                          size: 26,
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      const Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              'FlowTask',
-                              style: TextStyle(
-                                color: CoresApp.texto,
-                                fontSize: 18,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                            SizedBox(height: 2),
-                            Text(
-                              'Planejamento e Foco',
-                              style: TextStyle(
-                                color: CoresApp.textoSecundario,
-                                fontSize: 13,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 20),
-
-                // Botão rápido de Nova Tarefa
-                FilledButton.icon(
-                  onPressed: _abrirNovaTarefa,
-                  style: FilledButton.styleFrom(
-                    backgroundColor: CoresApp.principal,
-                    foregroundColor: CoresApp.sobrePrincipal,
-                    padding: const EdgeInsets.symmetric(vertical: 14),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(28),
-                    ),
-                  ),
-                  icon: const Icon(Icons.add_rounded, size: 20),
-                  label: const Text(
-                    'Adicionar tarefa',
-                    style: TextStyle(
-                      fontSize: 15,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 20),
-                const Divider(height: 1, color: CoresApp.borda),
-                const SizedBox(height: 12),
-
-                // Lista de opções de navegação
-                Expanded(
-                  child: ListView.separated(
-                    itemCount: _itens.length,
-                    separatorBuilder: (_, _) => const SizedBox(height: 6),
-                    itemBuilder: (context, index) {
-                      final item = _itens[index];
-                      final selecionado = index == _indiceSelecionado;
-
-                      return Material(
-                        color: selecionado
-                            ? CoresApp.principalSuave
-                            : Colors.transparent,
-                        borderRadius: BorderRadius.circular(14),
-                        child: InkWell(
-                          borderRadius: BorderRadius.circular(14),
-                          onTap: () => _selecionarItem(index),
-                          child: Padding(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 16,
-                              vertical: 14,
-                            ),
-                            child: Row(
-                              children: [
-                                Icon(
-                                  item.icone,
-                                  color: selecionado
-                                      ? CoresApp.principal
-                                      : CoresApp.textoSecundario,
-                                  size: 24,
-                                ),
-                                const SizedBox(width: 14),
-                                Text(
-                                  item.titulo,
-                                  style: TextStyle(
-                                    color: selecionado
-                                        ? CoresApp.principal
-                                        : CoresApp.texto,
-                                    fontSize: 15,
-                                    fontWeight: selecionado
-                                        ? FontWeight.w700
-                                        : FontWeight.w500,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
-                      );
-                    },
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
       body: IndexedStack(
         index: _indiceSelecionado,
-        children: _itens.map((item) => item.tela).toList(),
+        children: _destinos.map((destino) => destino.tela).toList(),
+      ),
+      bottomNavigationBar: NavigationBar(
+        selectedIndex: _indiceSelecionado,
+        onDestinationSelected: (indice) {
+          setState(() {
+            _indiceSelecionado = indice;
+          });
+        },
+        destinations: _destinos
+            .map(
+              (destino) => NavigationDestination(
+                icon: Icon(destino.icone),
+                selectedIcon: Icon(destino.iconeSelecionado),
+                label: destino.rotulo,
+              ),
+            )
+            .toList(),
       ),
     );
   }
