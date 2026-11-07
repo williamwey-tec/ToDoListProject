@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 
 import '../control/control_tarefa.dart';
 import '../model/tarefa.dart';
+import '../services/notificacao_service.dart';
 import '../tema/cores.dart';
 import '../widgets/botao.dart';
 import '../widgets/campo_texto.dart';
@@ -15,11 +16,13 @@ class TelaTarefa extends StatefulWidget {
     required this.controleTarefa,
     this.tarefa,
     this.dataInicial,
+    this.relogio = DateTime.now,
   });
 
   final OperacoesTarefa controleTarefa;
   final Tarefa? tarefa;
   final DateTime? dataInicial;
+  final RelogioTarefa relogio;
 
   bool get estaEditando => tarefa != null;
 
@@ -39,6 +42,8 @@ class _TelaTarefaState extends State<TelaTarefa> {
   late DateTime _dataSelecionada;
   TimeOfDay? _horarioSelecionado;
   late PrioridadeTarefa _prioridade;
+  late bool _lembreteAtivo;
+  late int _antecedenciaMinutos;
   bool _salvando = false;
   String? _erroOperacao;
 
@@ -46,14 +51,17 @@ class _TelaTarefaState extends State<TelaTarefa> {
   void initState() {
     super.initState();
     final tarefa = widget.tarefa;
-    _dataSelecionada = tarefa?.data ?? widget.dataInicial ?? DateTime.now();
+    final agora = widget.relogio();
+    _dataSelecionada = tarefa?.data ?? widget.dataInicial ?? agora;
     _horarioSelecionado = tarefa?.horario == null
-        ? (widget.estaEditando ? null : TimeOfDay.now())
+        ? (widget.estaEditando ? null : TimeOfDay.fromDateTime(agora))
         : TimeOfDay(
             hour: tarefa!.horario!.hora,
             minute: tarefa.horario!.minuto,
           );
     _prioridade = tarefa?.prioridade ?? PrioridadeTarefa.media;
+    _lembreteAtivo = tarefa?.lembreteAtivo ?? false;
+    _antecedenciaMinutos = tarefa?.antecedenciaLembrete.inMinutes ?? 15;
 
     _tituloController = TextEditingController(text: tarefa?.titulo ?? '');
     _descricaoController = TextEditingController(text: tarefa?.descricao ?? '');
@@ -124,7 +132,8 @@ class _TelaTarefaState extends State<TelaTarefa> {
     FocusScope.of(context).unfocus();
     final selecionado = await showTimePicker(
       context: context,
-      initialTime: _horarioSelecionado ?? TimeOfDay.now(),
+      initialTime:
+          _horarioSelecionado ?? TimeOfDay.fromDateTime(widget.relogio()),
       helpText: 'Selecionar horário da tarefa',
       cancelText: 'Cancelar',
       confirmText: 'Confirmar',
@@ -176,6 +185,8 @@ class _TelaTarefaState extends State<TelaTarefa> {
       prioridade: _prioridade,
       categoria: _textoOpcional(_categoriaController),
       status: widget.tarefa?.status ?? StatusTarefa.pendente,
+      lembreteAtivo: _lembreteAtivo,
+      antecedenciaLembrete: Duration(minutes: _antecedenciaMinutos),
     );
 
     setState(() => _salvando = true);
@@ -188,7 +199,14 @@ class _TelaTarefaState extends State<TelaTarefa> {
       } else {
         await widget.controleTarefa.criarTarefa(tarefa);
       }
-      if (mounted) Navigator.of(context).pop(true);
+      if (mounted) {
+        final mensagem = _mensagemResultadoLembrete();
+        final mensageiro = ScaffoldMessenger.of(context);
+        Navigator.of(context).pop(true);
+        if (mensagem != null) {
+          mensageiro.showSnackBar(SnackBar(content: Text(mensagem)));
+        }
+      }
     } catch (erro) {
       if (!mounted) return;
       setState(() {
@@ -246,6 +264,50 @@ class _TelaTarefaState extends State<TelaTarefa> {
       return 'O armazenamento de tarefas não está disponível no navegador.';
     }
     return 'Não foi possível $acao a tarefa. Tente novamente.';
+  }
+
+  String? _mensagemResultadoLembrete() {
+    if (!_lembreteAtivo) return null;
+    final controle = widget.controleTarefa;
+    if (controle is! OperacoesLembreteTarefa) {
+      return 'Tarefa salva, mas não foi possível confirmar o agendamento.';
+    }
+    final operacoesLembrete = controle as OperacoesLembreteTarefa;
+    return switch (operacoesLembrete.ultimoResultadoAgendamento) {
+      ResultadoAgendamentoLembrete.agendadoComPossivelAtraso =>
+        'Lembrete agendado. O Android pode atrasar um pouco a entrega.',
+      ResultadoAgendamentoLembrete.horarioAusente =>
+        'Tarefa salva sem agendamento: defina um horário para o lembrete.',
+      ResultadoAgendamentoLembrete.horarioPassado =>
+        'Tarefa salva sem agendamento: o horário do lembrete já passou.',
+      ResultadoAgendamentoLembrete.permissaoNegada =>
+        'Tarefa salva sem agendamento: permita notificações em Perfil.',
+      ResultadoAgendamentoLembrete.indisponivel =>
+        'Tarefa salva sem agendamento: notificações não estão disponíveis.',
+      ResultadoAgendamentoLembrete.falha ||
+      null => 'Tarefa salva, mas não foi possível agendar o lembrete.',
+      ResultadoAgendamentoLembrete.desativado ||
+      ResultadoAgendamentoLembrete.tarefaConcluida => null,
+    };
+  }
+
+  String? get _avisoLembrete {
+    if (!_lembreteAtivo) return null;
+    final horario = _horarioSelecionado;
+    if (horario == null) {
+      return 'Defina um horário para poder salvar e agendar o lembrete.';
+    }
+    final instante = DateTime(
+      _dataSelecionada.year,
+      _dataSelecionada.month,
+      _dataSelecionada.day,
+      horario.hour,
+      horario.minute,
+    ).subtract(Duration(minutes: _antecedenciaMinutos));
+    if (!instante.isAfter(widget.relogio())) {
+      return 'Esse lembrete ficaria no passado. A tarefa será salva sem agendamento.';
+    }
+    return null;
   }
 
   @override
@@ -416,6 +478,94 @@ class _TelaTarefaState extends State<TelaTarefa> {
                       );
                     }).toList(),
                   ),
+                  const SizedBox(height: 22),
+                  Text(
+                    'Quando lembrar?',
+                    style: tema.textTheme.titleMedium?.copyWith(
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Card(
+                    margin: EdgeInsets.zero,
+                    child: Column(
+                      children: [
+                        SwitchListTile(
+                          key: const Key('ativar_lembrete_individual'),
+                          value: _lembreteAtivo,
+                          onChanged: _salvando
+                              ? null
+                              : (valor) =>
+                                    setState(() => _lembreteAtivo = valor),
+                          secondary: const Icon(
+                            Icons.alarm_outlined,
+                            color: CoresApp.principal,
+                          ),
+                          title: const Text(
+                            'Lembrete individual',
+                            style: TextStyle(fontWeight: FontWeight.w700),
+                          ),
+                          subtitle: const Text(
+                            'Ative somente para esta tarefa',
+                          ),
+                        ),
+                        if (_lembreteAtivo) ...[
+                          const Divider(height: 1),
+                          Padding(
+                            padding: const EdgeInsets.all(16),
+                            child: DropdownButtonFormField<int>(
+                              key: const Key('antecedencia_lembrete'),
+                              initialValue: _antecedenciaMinutos,
+                              decoration: const InputDecoration(
+                                labelText: 'Antecedência',
+                                prefixIcon: Icon(Icons.schedule_outlined),
+                              ),
+                              items: _opcoesAntecedencia
+                                  .map(
+                                    (minutos) => DropdownMenuItem<int>(
+                                      value: minutos,
+                                      child: Text(_rotuloAntecedencia(minutos)),
+                                    ),
+                                  )
+                                  .toList(),
+                              onChanged: _salvando
+                                  ? null
+                                  : (valor) {
+                                      if (valor != null) {
+                                        setState(
+                                          () => _antecedenciaMinutos = valor,
+                                        );
+                                      }
+                                    },
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                  if (_avisoLembrete != null) ...[
+                    const SizedBox(height: 10),
+                    Container(
+                      key: const Key('aviso_lembrete_nao_agendado'),
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: CoresApp.principalSuave,
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Icon(
+                            Icons.info_outline_rounded,
+                            color: CoresApp.principal,
+                          ),
+                          const SizedBox(width: 10),
+                          Expanded(child: Text(_avisoLembrete!)),
+                        ],
+                      ),
+                    ),
+                  ],
                   if (_erroOperacao != null) ...[
                     const SizedBox(height: 16),
                     Container(
@@ -485,6 +635,19 @@ class _TelaTarefaState extends State<TelaTarefa> {
       PrioridadeTarefa.media => 'Média',
       PrioridadeTarefa.alta => 'Alta',
     };
+  }
+
+  List<int> get _opcoesAntecedencia {
+    final opcoes = <int>{0, 5, 15, 30, 60, 120, _antecedenciaMinutos}.toList()
+      ..sort();
+    return opcoes;
+  }
+
+  String _rotuloAntecedencia(int minutos) {
+    if (minutos == 0) return 'No horário';
+    if (minutos == 60) return '1 hora antes';
+    if (minutos == 120) return '2 horas antes';
+    return '$minutos minutos antes';
   }
 
   Color _corPrioridade(PrioridadeTarefa prioridade) {

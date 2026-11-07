@@ -44,6 +44,8 @@ class Tarefa {
   final PrioridadeTarefa prioridade;
   final String? categoria;
   final StatusTarefa status;
+  final bool lembreteAtivo;
+  final Duration antecedenciaLembrete;
 
   Tarefa({
     this.identificador,
@@ -56,7 +58,17 @@ class Tarefa {
     this.prioridade = PrioridadeTarefa.media,
     this.categoria,
     this.status = StatusTarefa.pendente,
-  }) : data = DateTime(data.year, data.month, data.day);
+    this.lembreteAtivo = false,
+    this.antecedenciaLembrete = const Duration(minutes: 15),
+  }) : data = DateTime(data.year, data.month, data.day) {
+    if (antecedenciaLembrete.isNegative) {
+      throw ArgumentError.value(
+        antecedenciaLembrete,
+        'antecedenciaLembrete',
+        'Não pode ser negativa.',
+      );
+    }
+  }
 
   /// Cria uma nova tarefa preservando todos os dados e alterando o estado.
   Tarefa copiarComStatus(StatusTarefa novoStatus) {
@@ -71,6 +83,8 @@ class Tarefa {
       prioridade: prioridade,
       categoria: categoria,
       status: novoStatus,
+      lembreteAtivo: lembreteAtivo,
+      antecedenciaLembrete: antecedenciaLembrete,
     );
   }
 }

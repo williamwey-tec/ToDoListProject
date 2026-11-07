@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 
 import '../control/control_tarefa.dart';
 import '../model/tarefa.dart';
+import '../services/configuracoes_service.dart';
 import '../tema/cores.dart';
 import '../widgets/card_tarefa.dart';
 import '../widgets/indicador_progresso.dart';
@@ -26,6 +27,7 @@ class TelaHoje extends StatefulWidget {
     this.revisaoTarefas = 0,
     this.onTarefasAlteradas,
     this.onNovaTarefa,
+    this.configuracoesService,
   });
 
   final OperacoesTarefa controleTarefa;
@@ -33,6 +35,7 @@ class TelaHoje extends StatefulWidget {
   final int revisaoTarefas;
   final VoidCallback? onTarefasAlteradas;
   final Future<void> Function()? onNovaTarefa;
+  final ConfiguracoesService? configuracoesService;
 
   @override
   State<TelaHoje> createState() => _TelaHojeState();
@@ -75,12 +78,17 @@ class _TelaHojeState extends State<TelaHoje> {
   void initState() {
     super.initState();
     _dataExibida = _normalizarData(widget.relogio());
+    widget.configuracoesService?.addListener(_atualizarSaudacao);
     _carregarHoje();
   }
 
   @override
   void didUpdateWidget(covariant TelaHoje oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (oldWidget.configuracoesService != widget.configuracoesService) {
+      oldWidget.configuracoesService?.removeListener(_atualizarSaudacao);
+      widget.configuracoesService?.addListener(_atualizarSaudacao);
+    }
     if (oldWidget.controleTarefa != widget.controleTarefa ||
         oldWidget.relogio != widget.relogio ||
         oldWidget.revisaoTarefas != widget.revisaoTarefas) {
@@ -91,7 +99,12 @@ class _TelaHojeState extends State<TelaHoje> {
   @override
   void dispose() {
     _versaoCarregamento++;
+    widget.configuracoesService?.removeListener(_atualizarSaudacao);
     super.dispose();
+  }
+
+  void _atualizarSaudacao() {
+    if (mounted) setState(() {});
   }
 
   DateTime _normalizarData(DateTime data) =>
@@ -204,9 +217,13 @@ class _TelaHojeState extends State<TelaHoje> {
 
   String _saudacao() {
     final hora = widget.relogio().hour;
-    if (hora < 12) return 'Bom dia!';
-    if (hora < 18) return 'Boa tarde!';
-    return 'Boa noite!';
+    final periodo = hora < 12
+        ? 'Bom dia'
+        : hora < 18
+        ? 'Boa tarde'
+        : 'Boa noite';
+    final nome = widget.configuracoesService?.configuracoes.nomeExibicao;
+    return nome == null ? '$periodo!' : '$periodo, $nome!';
   }
 
   String _formatarData(DateTime data) {

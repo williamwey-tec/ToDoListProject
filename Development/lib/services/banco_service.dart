@@ -1,6 +1,7 @@
 import 'package:path/path.dart' as path;
 import 'package:sqflite/sqflite.dart';
 
+import '../model/sessao_foco.dart';
 import '../model/tarefa.dart';
 
 /// Acesso assíncrono ao SQLite e persistência das tarefas.
@@ -23,8 +24,9 @@ class BancoService {
 
   BancoService._(this._nomeBanco, this._caminhoBanco, this._fabricaBanco);
 
-  static const _versaoBanco = 1;
+  static const _versaoBanco = 3;
   static const _tabelaTarefas = 'tarefas';
+  static const _tabelaSessaoFoco = 'sessao_foco';
 
   final String _nomeBanco;
   final String? _caminhoBanco;
@@ -60,6 +62,11 @@ class BancoService {
   Future<List<Tarefa>> consultarTarefasPorData(DateTime data) async {
     final dataCivil = _formatarDataCivil(data);
     return _consultarTarefas(where: 'data_civil = ?', whereArgs: [dataCivil]);
+  }
+
+  /// Consulta todas as tarefas para reconciliar lembretes persistidos.
+  Future<List<Tarefa>> consultarTodasTarefas() async {
+    return _consultarTarefas(where: null, whereArgs: null);
   }
 
   /// Consulta o intervalo civil de [dataInicial] até [dataFinal], inclusive.
@@ -108,6 +115,220 @@ class BancoService {
     );
   }
 
+  /// Atualiza somente os campos editáveis, sem sobrescrever situação ou tempo.
+  ///
+  /// Essa operação evita que uma edição concorrente com o cronômetro grave de
+  /// volta uma cópia antiga do tempo registrado.
+  Future<int> atualizarCamposEditaveisTarefa(
+    int identificador,
+    Tarefa tarefa,
+  ) async {
+    final banco = await _obterBanco();
+    final mapa = _tarefaParaMapa(tarefa);
+    return banco.update(
+      _tabelaTarefas,
+      {
+        'titulo': mapa['titulo'],
+        'descricao': mapa['descricao'],
+        'data_civil': mapa['data_civil'],
+        'horario_minutos': mapa['horario_minutos'],
+        'duracao_estimada_microssegundos':
+            mapa['duracao_estimada_microssegundos'],
+        'prioridade': mapa['prioridade'],
+        'categoria': mapa['categoria'],
+        'lembrete_ativo': mapa['lembrete_ativo'],
+        'lembrete_antecedencia_minutos': mapa['lembrete_antecedencia_minutos'],
+      },
+      where: 'identificador = ?',
+      whereArgs: [identificador],
+    );
+  }
+
+  /// Retorna a única sessão global, pausada ou em andamento.
+  Future<SessaoFocoPersistida?> consultarSessaoFoco() async {
+    final banco = await _obterBanco();
+    final linhas = await banco.query(_tabelaSessaoFoco, limit: 1);
+    if (linhas.isEmpty) return null;
+    return _sessaoFocoDoMapa(linhas.single);
+  }
+
+  /// Seleciona uma tarefa sem iniciar a contagem.
+  Future<ResultadoTransicaoFoco> selecionarTarefaFoco(
+    int tarefaIdentificador,
+  ) async {
+    final banco = await _obterBanco();
+    return banco.transaction((transacao) async {
+      final validacao = await _validarTarefaParaFoco(
+        transacao,
+        tarefaIdentificador,
+      );
+      if (validacao != ResultadoTransicaoFoco.realizada) return validacao;
+
+      final sessao = await _consultarSessaoNaTransacao(transacao);
+      if (sessao?.estaEmAndamento == true &&
+          sessao!.tarefaIdentificador != tarefaIdentificador) {
+        return ResultadoTransicaoFoco.outraTarefaEmAndamento;
+      }
+      if (sessao?.tarefaIdentificador == tarefaIdentificador) {
+        return ResultadoTransicaoFoco.realizada;
+      }
+
+      await transacao.insert(_tabelaSessaoFoco, {
+        'identificador': 1,
+        'tarefa_identificador': tarefaIdentificador,
+        'inicio_microssegundos': null,
+      }, conflictAlgorithm: ConflictAlgorithm.replace);
+      return ResultadoTransicaoFoco.realizada;
+    });
+  }
+
+  /// Inicia ou retoma a sessão de forma atômica e idempotente.
+  Future<ResultadoTransicaoFoco> iniciarFoco(
+    int tarefaIdentificador,
+    DateTime inicio,
+  ) async {
+    final banco = await _obterBanco();
+    return banco.transaction((transacao) async {
+      final validacao = await _validarTarefaParaFoco(
+        transacao,
+        tarefaIdentificador,
+      );
+      if (validacao != ResultadoTransicaoFoco.realizada) return validacao;
+
+      final sessao = await _consultarSessaoNaTransacao(transacao);
+      if (sessao?.estaEmAndamento == true) {
+        return sessao!.tarefaIdentificador == tarefaIdentificador
+            ? ResultadoTransicaoFoco.jaEmAndamento
+            : ResultadoTransicaoFoco.outraTarefaEmAndamento;
+      }
+
+      await transacao.insert(_tabelaSessaoFoco, {
+        'identificador': 1,
+        'tarefa_identificador': tarefaIdentificador,
+        'inicio_microssegundos': inicio.microsecondsSinceEpoch,
+      }, conflictAlgorithm: ConflictAlgorithm.replace);
+      return ResultadoTransicaoFoco.realizada;
+    });
+  }
+
+  /// Consolida uma única vez o intervalo ativo e mantém a tarefa selecionada.
+  Future<ResultadoTransicaoFoco> pausarFoco(DateTime agora) async {
+    final banco = await _obterBanco();
+    return banco.transaction((transacao) async {
+      final sessao = await _consultarSessaoNaTransacao(transacao);
+      if (sessao == null) return ResultadoTransicaoFoco.semSessao;
+      if (!sessao.estaEmAndamento) {
+        return ResultadoTransicaoFoco.jaPausada;
+      }
+
+      final tarefaExiste = await transacao.query(
+        _tabelaTarefas,
+        columns: ['identificador'],
+        where: 'identificador = ?',
+        whereArgs: [sessao.tarefaIdentificador],
+        limit: 1,
+      );
+      if (tarefaExiste.isEmpty) {
+        await transacao.delete(_tabelaSessaoFoco);
+        return ResultadoTransicaoFoco.tarefaInexistente;
+      }
+
+      final decorrido = _duracaoNaoNegativa(sessao.inicio!, agora);
+      await transacao.rawUpdate(
+        '''
+        UPDATE $_tabelaTarefas
+        SET tempo_registrado_microssegundos =
+            tempo_registrado_microssegundos + ?
+        WHERE identificador = ?
+        ''',
+        [decorrido.inMicroseconds, sessao.tarefaIdentificador],
+      );
+      await transacao.update(_tabelaSessaoFoco, {
+        'inicio_microssegundos': null,
+      }, where: 'identificador = 1');
+      return ResultadoTransicaoFoco.realizada;
+    });
+  }
+
+  /// Conclui a tarefa e encerra sua sessão na mesma transação.
+  Future<Tarefa?> concluirTarefaComFoco(
+    int tarefaIdentificador,
+    DateTime agora,
+  ) async {
+    final banco = await _obterBanco();
+    return banco.transaction((transacao) async {
+      final linhas = await transacao.query(
+        _tabelaTarefas,
+        where: 'identificador = ?',
+        whereArgs: [tarefaIdentificador],
+        limit: 1,
+      );
+      if (linhas.isEmpty) return null;
+
+      final sessao = await _consultarSessaoNaTransacao(transacao);
+      if (sessao?.tarefaIdentificador == tarefaIdentificador) {
+        if (sessao!.estaEmAndamento) {
+          final decorrido = _duracaoNaoNegativa(sessao.inicio!, agora);
+          await transacao.rawUpdate(
+            '''
+            UPDATE $_tabelaTarefas
+            SET tempo_registrado_microssegundos =
+                tempo_registrado_microssegundos + ?
+            WHERE identificador = ?
+            ''',
+            [decorrido.inMicroseconds, tarefaIdentificador],
+          );
+        }
+        await transacao.delete(_tabelaSessaoFoco);
+      }
+
+      await transacao.update(
+        _tabelaTarefas,
+        {'situacao': 'concluida'},
+        where: 'identificador = ?',
+        whereArgs: [tarefaIdentificador],
+      );
+      final atualizada = await transacao.query(
+        _tabelaTarefas,
+        where: 'identificador = ?',
+        whereArgs: [tarefaIdentificador],
+        limit: 1,
+      );
+      return _tarefaDoMapa(atualizada.single);
+    });
+  }
+
+  /// Exclui tarefa e eventual sessão associada sem deixar referência órfã.
+  Future<int> excluirTarefaComFoco(
+    int tarefaIdentificador,
+    DateTime agora,
+  ) async {
+    final banco = await _obterBanco();
+    return banco.transaction((transacao) async {
+      final sessao = await _consultarSessaoNaTransacao(transacao);
+      if (sessao?.tarefaIdentificador == tarefaIdentificador) {
+        if (sessao!.estaEmAndamento) {
+          final decorrido = _duracaoNaoNegativa(sessao.inicio!, agora);
+          await transacao.rawUpdate(
+            '''
+            UPDATE $_tabelaTarefas
+            SET tempo_registrado_microssegundos =
+                tempo_registrado_microssegundos + ?
+            WHERE identificador = ?
+            ''',
+            [decorrido.inMicroseconds, tarefaIdentificador],
+          );
+        }
+        await transacao.delete(_tabelaSessaoFoco);
+      }
+      return transacao.delete(
+        _tabelaTarefas,
+        where: 'identificador = ?',
+        whereArgs: [tarefaIdentificador],
+      );
+    });
+  }
+
   /// Exclui a tarefa indicada por [identificador].
   ///
   /// Retorna a quantidade de registros excluídos (zero ou um).
@@ -145,42 +366,118 @@ class BancoService {
       caminho,
       options: OpenDatabaseOptions(
         version: _versaoBanco,
+        onConfigure: (banco) async {
+          await banco.execute('PRAGMA foreign_keys = ON');
+        },
         onCreate: (banco, versao) async {
-          await banco.execute('''
-            CREATE TABLE $_tabelaTarefas (
-              identificador INTEGER PRIMARY KEY AUTOINCREMENT,
-              titulo TEXT NOT NULL,
-              descricao TEXT,
-              data_civil TEXT NOT NULL,
-              horario_minutos INTEGER,
-              duracao_estimada_microssegundos INTEGER,
-              tempo_registrado_microssegundos INTEGER NOT NULL,
-              prioridade TEXT NOT NULL,
-              categoria TEXT,
-              situacao TEXT NOT NULL,
-              CHECK (horario_minutos IS NULL OR
-                     horario_minutos BETWEEN 0 AND 1439),
-              CHECK (prioridade IN ('baixa', 'media', 'alta')),
-              CHECK (situacao IN
-                     ('pendente', 'concluida', 'atrasada', 'pausada'))
-            )
-          ''');
-          await banco.execute('''
-            CREATE INDEX indice_tarefas_data_ordem
-            ON $_tabelaTarefas (
-              data_civil,
-              horario_minutos,
-              identificador
-            )
-          ''');
+          await _criarTabelaTarefas(banco);
+          await _criarTabelaSessaoFoco(banco);
+        },
+        onUpgrade: (banco, versaoAnterior, novaVersao) async {
+          if (versaoAnterior < 2) {
+            await _criarTabelaSessaoFoco(banco);
+          }
+          if (versaoAnterior < 3) {
+            await banco.execute('''
+              ALTER TABLE $_tabelaTarefas
+              ADD COLUMN lembrete_ativo INTEGER NOT NULL DEFAULT 0
+              CHECK (lembrete_ativo IN (0, 1))
+            ''');
+            await banco.execute('''
+              ALTER TABLE $_tabelaTarefas
+              ADD COLUMN lembrete_antecedencia_minutos INTEGER NOT NULL
+              DEFAULT 15 CHECK (lembrete_antecedencia_minutos >= 0)
+            ''');
+          }
         },
       ),
     );
   }
 
+  Future<void> _criarTabelaTarefas(DatabaseExecutor banco) async {
+    await banco.execute('''
+      CREATE TABLE $_tabelaTarefas (
+        identificador INTEGER PRIMARY KEY AUTOINCREMENT,
+        titulo TEXT NOT NULL,
+        descricao TEXT,
+        data_civil TEXT NOT NULL,
+        horario_minutos INTEGER,
+        duracao_estimada_microssegundos INTEGER,
+        tempo_registrado_microssegundos INTEGER NOT NULL,
+        prioridade TEXT NOT NULL,
+        categoria TEXT,
+        situacao TEXT NOT NULL,
+        lembrete_ativo INTEGER NOT NULL DEFAULT 0,
+        lembrete_antecedencia_minutos INTEGER NOT NULL DEFAULT 15,
+        CHECK (horario_minutos IS NULL OR horario_minutos BETWEEN 0 AND 1439),
+        CHECK (prioridade IN ('baixa', 'media', 'alta')),
+        CHECK (situacao IN ('pendente', 'concluida', 'atrasada', 'pausada')),
+        CHECK (lembrete_ativo IN (0, 1)),
+        CHECK (lembrete_antecedencia_minutos >= 0)
+      )
+    ''');
+    await banco.execute('''
+      CREATE INDEX indice_tarefas_data_ordem
+      ON $_tabelaTarefas (data_civil, horario_minutos, identificador)
+    ''');
+  }
+
+  Future<void> _criarTabelaSessaoFoco(DatabaseExecutor banco) async {
+    await banco.execute('''
+      CREATE TABLE $_tabelaSessaoFoco (
+        identificador INTEGER PRIMARY KEY CHECK (identificador = 1),
+        tarefa_identificador INTEGER NOT NULL UNIQUE,
+        inicio_microssegundos INTEGER,
+        FOREIGN KEY (tarefa_identificador)
+          REFERENCES $_tabelaTarefas (identificador)
+          ON DELETE CASCADE
+      )
+    ''');
+  }
+
+  Future<SessaoFocoPersistida?> _consultarSessaoNaTransacao(
+    Transaction transacao,
+  ) async {
+    final linhas = await transacao.query(_tabelaSessaoFoco, limit: 1);
+    return linhas.isEmpty ? null : _sessaoFocoDoMapa(linhas.single);
+  }
+
+  Future<ResultadoTransicaoFoco> _validarTarefaParaFoco(
+    Transaction transacao,
+    int tarefaIdentificador,
+  ) async {
+    final linhas = await transacao.query(
+      _tabelaTarefas,
+      columns: ['situacao'],
+      where: 'identificador = ?',
+      whereArgs: [tarefaIdentificador],
+      limit: 1,
+    );
+    if (linhas.isEmpty) return ResultadoTransicaoFoco.tarefaInexistente;
+    if (linhas.single['situacao'] == 'concluida') {
+      return ResultadoTransicaoFoco.tarefaConcluida;
+    }
+    return ResultadoTransicaoFoco.realizada;
+  }
+
+  SessaoFocoPersistida _sessaoFocoDoMapa(Map<String, Object?> mapa) {
+    final inicioMicrossegundos = mapa['inicio_microssegundos'] as int?;
+    return SessaoFocoPersistida(
+      tarefaIdentificador: mapa['tarefa_identificador'] as int,
+      inicio: inicioMicrossegundos == null
+          ? null
+          : DateTime.fromMicrosecondsSinceEpoch(inicioMicrossegundos),
+    );
+  }
+
+  Duration _duracaoNaoNegativa(DateTime inicio, DateTime fim) {
+    final duracao = fim.difference(inicio);
+    return duracao.isNegative ? Duration.zero : duracao;
+  }
+
   Future<List<Tarefa>> _consultarTarefas({
-    required String where,
-    required List<Object?> whereArgs,
+    required String? where,
+    required List<Object?>? whereArgs,
   }) async {
     final banco = await _obterBanco();
     final resultados = await banco.query(
@@ -211,6 +508,8 @@ class BancoService {
       'prioridade': _prioridadeParaBanco(tarefa.prioridade),
       'categoria': tarefa.categoria,
       'situacao': _statusParaBanco(tarefa.status),
+      'lembrete_ativo': tarefa.lembreteAtivo ? 1 : 0,
+      'lembrete_antecedencia_minutos': tarefa.antecedenciaLembrete.inMinutes,
     };
   }
 
@@ -238,6 +537,10 @@ class BancoService {
       prioridade: _prioridadeDoBanco(mapa['prioridade'] as String),
       categoria: mapa['categoria'] as String?,
       status: _statusDoBanco(mapa['situacao'] as String),
+      lembreteAtivo: (mapa['lembrete_ativo'] as int? ?? 0) == 1,
+      antecedenciaLembrete: Duration(
+        minutes: mapa['lembrete_antecedencia_minutos'] as int? ?? 15,
+      ),
     );
   }
 

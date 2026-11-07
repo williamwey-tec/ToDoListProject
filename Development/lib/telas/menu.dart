@@ -3,9 +3,12 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
+import '../control/control_foco.dart';
 import '../control/control_tarefa.dart';
 import '../model/tarefa.dart';
 import '../services/banco_service.dart';
+import '../services/configuracoes_service.dart';
+import '../services/notificacao_service.dart';
 import '../tema/cores.dart';
 import 'tela_calendario.dart';
 import 'tela_foco.dart';
@@ -68,11 +71,47 @@ class _OperacoesTarefaIndisponiveis implements OperacoesTarefa {
   ) => _indisponivel();
 }
 
+class _OperacoesFocoIndisponiveis implements OperacoesFoco {
+  const _OperacoesFocoIndisponiveis();
+
+  Future<T> _indisponivel<T>() => Future<T>.error(
+    UnsupportedError('SQLite não está disponível neste ambiente.'),
+  );
+
+  @override
+  Future<EstadoFoco> consultarEstado() => _indisponivel();
+
+  @override
+  Future<EstadoFoco> selecionarTarefa(int identificador) => _indisponivel();
+
+  @override
+  Future<EstadoFoco> iniciar() => _indisponivel();
+
+  @override
+  Future<EstadoFoco> pausar() => _indisponivel();
+
+  @override
+  Future<EstadoFoco> retomar() => _indisponivel();
+
+  @override
+  Future<EstadoFoco> concluirTarefa() => _indisponivel();
+}
+
 /// Contêiner da navegação principal do FlowTask.
 class Menu extends StatefulWidget {
-  const Menu({super.key, this.controleTarefa, this.relogio = DateTime.now});
+  const Menu({
+    super.key,
+    this.controleTarefa,
+    this.controleFoco,
+    this.configuracoesService,
+    this.notificacaoService,
+    this.relogio = DateTime.now,
+  });
 
   final OperacoesTarefa? controleTarefa;
+  final OperacoesFoco? controleFoco;
+  final ConfiguracoesService? configuracoesService;
+  final NotificacaoService? notificacaoService;
   final RelogioTarefa relogio;
 
   @override
@@ -85,6 +124,12 @@ class _MenuState extends State<Menu> {
   int _revisaoTarefas = 0;
   BancoService? _banco;
   OperacoesTarefa? _controleTarefa;
+  OperacoesFoco? _controleFoco;
+  late final ConfiguracoesService _configuracoesService;
+  late final bool _possuiConfiguracoesService;
+  late final NotificacaoService _notificacaoService;
+  CoordenadorLembretes? _coordenadorLembretes;
+  bool _sincronizacaoInicialIniciada = false;
 
   static const List<_DestinoPrincipal> _destinos = [
     _DestinoPrincipal(
@@ -120,13 +165,25 @@ class _MenuState extends State<Menu> {
   @override
   void initState() {
     super.initState();
+    _possuiConfiguracoesService = widget.configuracoesService == null;
+    _configuracoesService =
+        widget.configuracoesService ?? ConfiguracoesService();
+    _notificacaoService =
+        widget.notificacaoService ??
+        (!kIsWeb && defaultTargetPlatform == TargetPlatform.android
+            ? NotificacaoServiceAndroid()
+            : const NotificacaoServiceIndisponivel());
+    unawaited(_configuracoesService.carregar());
     final hoje = widget.relogio();
     _dataSelecionadaCalendario = DateTime(hoje.year, hoje.month, hoje.day);
   }
 
   OperacoesTarefa _obterControleTarefa() {
     final injetado = widget.controleTarefa;
-    if (injetado != null) return injetado;
+    if (injetado != null) {
+      _iniciarSincronizacao(injetado);
+      return injetado;
+    }
 
     final existente = _controleTarefa;
     if (existente != null) return existente;
@@ -135,12 +192,49 @@ class _MenuState extends State<Menu> {
       return _controleTarefa = const _OperacoesTarefaIndisponiveis();
     }
 
-    final banco = BancoService();
-    _banco = banco;
-    return _controleTarefa = ControlTarefa(
-      banco: banco,
+    final controle = ControlTarefa(
+      banco: _obterBanco(),
       relogio: widget.relogio,
+      coordenadorLembretes: _obterCoordenadorLembretes(),
     );
+    _controleTarefa = controle;
+    _iniciarSincronizacao(controle);
+    return controle;
+  }
+
+  OperacoesFoco _obterControleFoco() {
+    final injetado = widget.controleFoco;
+    if (injetado != null) return injetado;
+
+    final existente = _controleFoco;
+    if (existente != null) return existente;
+
+    if (kIsWeb || widget.controleTarefa != null) {
+      return _controleFoco = const _OperacoesFocoIndisponiveis();
+    }
+
+    return _controleFoco = ControlFoco(
+      banco: _obterBanco(),
+      relogio: widget.relogio,
+      coordenadorLembretes: _obterCoordenadorLembretes(),
+    );
+  }
+
+  BancoService _obterBanco() => _banco ??= BancoService();
+
+  CoordenadorLembretes _obterCoordenadorLembretes() =>
+      _coordenadorLembretes ??= CoordenadorLembretes(
+        banco: _obterBanco(),
+        notificacaoService: _notificacaoService,
+        relogio: widget.relogio,
+      );
+
+  void _iniciarSincronizacao(OperacoesTarefa controle) {
+    if (_sincronizacaoInicialIniciada || controle is! OperacoesLembreteTarefa) {
+      return;
+    }
+    _sincronizacaoInicialIniciada = true;
+    unawaited((controle as OperacoesLembreteTarefa).sincronizarLembretes());
   }
 
   void _informarBancoIndisponivel() {
@@ -165,8 +259,11 @@ class _MenuState extends State<Menu> {
           : widget.relogio();
       final alterou = await Navigator.of(context).push<bool>(
         MaterialPageRoute<bool>(
-          builder: (_) =>
-              TelaTarefa(controleTarefa: controle, dataInicial: dataInicial),
+          builder: (_) => TelaTarefa(
+            controleTarefa: controle,
+            dataInicial: dataInicial,
+            relogio: widget.relogio,
+          ),
         ),
       );
       if (alterou == true && mounted) {
@@ -197,15 +294,24 @@ class _MenuState extends State<Menu> {
   }
 
   void _abrirNotificacoes() {
-    Navigator.of(
-      context,
-    ).push(MaterialPageRoute<void>(builder: (_) => const TelaNotificacoes()));
+    final controle = _obterControleTarefa();
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => TelaNotificacoes(
+          notificacaoService: _notificacaoService,
+          sincronizarLembretes: controle is OperacoesLembreteTarefa
+              ? (controle as OperacoesLembreteTarefa).sincronizarLembretes
+              : null,
+        ),
+      ),
+    );
   }
 
   @override
   void dispose() {
     final banco = _banco;
     if (banco != null) unawaited(banco.fechar());
+    if (_possuiConfiguracoesService) _configuracoesService.dispose();
     super.dispose();
   }
 
@@ -288,6 +394,7 @@ class _MenuState extends State<Menu> {
             revisaoTarefas: _revisaoTarefas,
             onTarefasAlteradas: _registrarAlteracaoTarefas,
             onNovaTarefa: _abrirNovaTarefa,
+            configuracoesService: _configuracoesService,
           ),
           TelaCalendario(
             controleTarefa: _obterControleTarefa(),
@@ -298,8 +405,31 @@ class _MenuState extends State<Menu> {
               _dataSelecionadaCalendario = data;
             },
           ),
-          const TelaFoco(),
-          const TelaPerfil(),
+          TelaFoco(
+            controleFoco: _obterControleFoco(),
+            relogio: widget.relogio,
+            revisaoTarefas: _revisaoTarefas,
+            onTarefasAlteradas: _registrarAlteracaoTarefas,
+          ),
+          TelaPerfil(
+            configuracoesService: _configuracoesService,
+            notificacaoService: _notificacaoService,
+            sincronizarLembretes: () {
+              final controle = _obterControleTarefa();
+              if (controle is OperacoesLembreteTarefa) {
+                return (controle as OperacoesLembreteTarefa)
+                    .sincronizarLembretes();
+              }
+              return Future.value(
+                const RelatorioSincronizacaoLembretes(
+                  agendados: 0,
+                  cancelados: 0,
+                  falhas: 0,
+                  statusPermissao: StatusPermissaoNotificacao.indisponivel,
+                ),
+              );
+            },
+          ),
         ],
       ),
       bottomNavigationBar: NavigationBar(

@@ -1,5 +1,6 @@
 import '../model/tarefa.dart';
 import '../services/banco_service.dart';
+import '../services/notificacao_service.dart';
 
 /// Relógio local usado para decidir se uma tarefa está atrasada.
 ///
@@ -30,6 +31,13 @@ abstract interface class OperacoesTarefa {
   Future<Tarefa> reabrirTarefa(int identificador);
 
   Future<void> excluirTarefa(int identificador);
+}
+
+/// Operações adicionais de lembrete usadas sem ampliar o contrato das telas.
+abstract interface class OperacoesLembreteTarefa {
+  ResultadoAgendamentoLembrete? get ultimoResultadoAgendamento;
+
+  Future<RelatorioSincronizacaoLembretes> sincronizarLembretes();
 }
 
 /// Erro de validação de dados recebidos pelo [ControlTarefa].
@@ -81,15 +89,35 @@ class TransicaoTarefaException implements Exception {
 /// banco, uma tarefa ativa permanece `pendente`; assim, editar ou reabrir não
 /// congela um estado derivado. Tarefas concluídas ou pausadas nunca são
 /// apresentadas como atrasadas.
-class ControlTarefa implements OperacoesTarefa {
-  factory ControlTarefa({required BancoService banco, RelogioTarefa? relogio}) {
-    return ControlTarefa._(banco, relogio ?? DateTime.now);
+class ControlTarefa implements OperacoesTarefa, OperacoesLembreteTarefa {
+  factory ControlTarefa({
+    required BancoService banco,
+    RelogioTarefa? relogio,
+    NotificacaoService? notificacaoService,
+    CoordenadorLembretes? coordenadorLembretes,
+  }) {
+    final relogioEfetivo = relogio ?? DateTime.now;
+    return ControlTarefa._(
+      banco,
+      relogioEfetivo,
+      coordenadorLembretes ??
+          CoordenadorLembretes(
+            banco: banco,
+            notificacaoService:
+                notificacaoService ?? const NotificacaoServiceIndisponivel(),
+            relogio: relogioEfetivo,
+          ),
+    );
   }
 
-  ControlTarefa._(this._banco, this._relogio);
+  ControlTarefa._(this._banco, this._relogio, this._coordenadorLembretes);
 
   final BancoService _banco;
   final RelogioTarefa _relogio;
+  final CoordenadorLembretes _coordenadorLembretes;
+
+  @override
+  ResultadoAgendamentoLembrete? ultimoResultadoAgendamento;
 
   /// Valida e persiste uma nova tarefa, retornando-a com o ID gerado.
   @override
@@ -110,7 +138,9 @@ class ControlTarefa implements OperacoesTarefa {
         'A tarefa $identificador foi inserida, mas não pôde ser consultada.',
       );
     }
-    return _aplicarAtraso(persistida);
+    final exibida = _aplicarAtraso(persistida);
+    ultimoResultadoAgendamento = await _agendarSemFalhar(exibida);
+    return exibida;
   }
 
   /// Consulta pelo ID e projeta o atraso atual, ou retorna `null`.
@@ -118,14 +148,16 @@ class ControlTarefa implements OperacoesTarefa {
   Future<Tarefa?> consultarTarefaPorId(int identificador) async {
     _validarIdentificador(identificador);
     final tarefa = await _banco.consultarTarefaPorId(identificador);
-    return tarefa == null ? null : _aplicarAtraso(tarefa);
+    if (tarefa == null) return null;
+    final agora = _relogio();
+    return _aplicarAtraso(await _aplicarFocoAtivo(tarefa, agora), agora);
   }
 
   /// Consulta um dia civil na ordem definida pelo [BancoService].
   @override
   Future<List<Tarefa>> consultarTarefasPorData(DateTime data) async {
     final tarefas = await _banco.consultarTarefasPorData(data);
-    return _aplicarAtrasoEmTodas(tarefas);
+    return _aplicarFocoEAtrasoEmTodas(tarefas);
   }
 
   /// Consulta um intervalo civil inclusivo na ordem do [BancoService].
@@ -138,7 +170,7 @@ class ControlTarefa implements OperacoesTarefa {
       dataInicial,
       dataFinal,
     );
-    return _aplicarAtrasoEmTodas(tarefas);
+    return _aplicarFocoEAtrasoEmTodas(tarefas);
   }
 
   /// Altera os dados editáveis preservando ID, tempo registrado e situação.
@@ -161,20 +193,37 @@ class ControlTarefa implements OperacoesTarefa {
       prioridade: dadosEditados.prioridade,
       categoria: dadosEditados.categoria,
       status: _statusPersistivel(atual.status),
+      lembreteAtivo: dadosEditados.lembreteAtivo,
+      antecedenciaLembrete: dadosEditados.antecedenciaLembrete,
     );
     _validarDadosEditaveis(editada);
 
-    await _atualizarExistente(identificador, editada);
-    return _aplicarAtraso(editada);
+    final alteradas = await _banco.atualizarCamposEditaveisTarefa(
+      identificador,
+      editada,
+    );
+    if (alteradas == 0) {
+      throw TarefaNaoEncontradaException(identificador);
+    }
+    final persistida = await _obterExistente(identificador);
+    final exibida = _aplicarAtraso(persistida);
+    ultimoResultadoAgendamento = await _agendarSemFalhar(exibida);
+    return exibida;
   }
 
   /// Marca a tarefa como concluída, preservando todos os demais dados.
   @override
   Future<Tarefa> concluirTarefa(int identificador) async {
     _validarIdentificador(identificador);
-    final atual = await _obterExistente(identificador);
-    final concluida = atual.copiarComStatus(StatusTarefa.concluida);
-    await _atualizarExistente(identificador, concluida);
+    final concluida = await _banco.concluirTarefaComFoco(
+      identificador,
+      _relogio(),
+    );
+    if (concluida == null) {
+      throw TarefaNaoEncontradaException(identificador);
+    }
+    await _cancelarSemFalhar(identificador);
+    ultimoResultadoAgendamento = ResultadoAgendamentoLembrete.tarefaConcluida;
     return concluida;
   }
 
@@ -192,17 +241,23 @@ class ControlTarefa implements OperacoesTarefa {
 
     final reaberta = atual.copiarComStatus(StatusTarefa.pendente);
     await _atualizarExistente(identificador, reaberta);
-    return _aplicarAtraso(reaberta);
+    final exibida = _aplicarAtraso(reaberta);
+    ultimoResultadoAgendamento = await _agendarSemFalhar(exibida);
+    return exibida;
   }
 
   /// Exclui uma tarefa pelo ID.
   @override
   Future<void> excluirTarefa(int identificador) async {
     _validarIdentificador(identificador);
-    final excluidas = await _banco.excluirTarefa(identificador);
+    final excluidas = await _banco.excluirTarefaComFoco(
+      identificador,
+      _relogio(),
+    );
     if (excluidas == 0) {
       throw TarefaNaoEncontradaException(identificador);
     }
+    await _cancelarSemFalhar(identificador);
   }
 
   Future<Tarefa> _obterExistente(int identificador) async {
@@ -231,6 +286,8 @@ class ControlTarefa implements OperacoesTarefa {
       prioridade: tarefa.prioridade,
       categoria: tarefa.categoria,
       status: _statusPersistivel(tarefa.status),
+      lembreteAtivo: tarefa.lembreteAtivo,
+      antecedenciaLembrete: tarefa.antecedenciaLembrete,
     );
   }
 
@@ -259,11 +316,81 @@ class ControlTarefa implements OperacoesTarefa {
     }
   }
 
-  List<Tarefa> _aplicarAtrasoEmTodas(List<Tarefa> tarefas) {
+  Future<List<Tarefa>> _aplicarFocoEAtrasoEmTodas(List<Tarefa> tarefas) async {
     final agora = _relogio();
-    return tarefas
+    final comFoco = await _aplicarFocoAtivoEmTodas(tarefas, agora);
+    return comFoco
         .map((tarefa) => _aplicarAtraso(tarefa, agora))
         .toList(growable: false);
+  }
+
+  Future<List<Tarefa>> _aplicarFocoAtivoEmTodas(
+    List<Tarefa> tarefas,
+    DateTime agora,
+  ) async {
+    final sessao = await _banco.consultarSessaoFoco();
+    if (sessao?.inicio == null) return tarefas;
+    final decorrido = agora.difference(sessao!.inicio!);
+    if (decorrido.isNegative) return tarefas;
+    return tarefas
+        .map(
+          (tarefa) => tarefa.identificador == sessao.tarefaIdentificador
+              ? _copiarComTempo(tarefa, tarefa.tempoRegistrado + decorrido)
+              : tarefa,
+        )
+        .toList(growable: false);
+  }
+
+  Future<Tarefa> _aplicarFocoAtivo(Tarefa tarefa, DateTime agora) async {
+    final tarefas = await _aplicarFocoAtivoEmTodas([tarefa], agora);
+    return tarefas.single;
+  }
+
+  Tarefa _copiarComTempo(Tarefa tarefa, Duration tempoRegistrado) {
+    return Tarefa(
+      identificador: tarefa.identificador,
+      titulo: tarefa.titulo,
+      descricao: tarefa.descricao,
+      data: tarefa.data,
+      horario: tarefa.horario,
+      duracaoEstimada: tarefa.duracaoEstimada,
+      tempoRegistrado: tempoRegistrado,
+      prioridade: tarefa.prioridade,
+      categoria: tarefa.categoria,
+      status: tarefa.status,
+      lembreteAtivo: tarefa.lembreteAtivo,
+      antecedenciaLembrete: tarefa.antecedenciaLembrete,
+    );
+  }
+
+  @override
+  Future<RelatorioSincronizacaoLembretes> sincronizarLembretes() async {
+    try {
+      return await _coordenadorLembretes.sincronizar();
+    } catch (_) {
+      return const RelatorioSincronizacaoLembretes(
+        agendados: 0,
+        cancelados: 0,
+        falhas: 1,
+        statusPermissao: StatusPermissaoNotificacao.erro,
+      );
+    }
+  }
+
+  Future<ResultadoAgendamentoLembrete> _agendarSemFalhar(Tarefa tarefa) async {
+    try {
+      return await _coordenadorLembretes.reconciliarTarefa(
+        tarefa.identificador!,
+      );
+    } catch (_) {
+      return ResultadoAgendamentoLembrete.falha;
+    }
+  }
+
+  Future<void> _cancelarSemFalhar(int identificador) async {
+    try {
+      await _coordenadorLembretes.reconciliarTarefa(identificador);
+    } catch (_) {}
   }
 
   Tarefa _aplicarAtraso(Tarefa tarefa, [DateTime? agora]) {
