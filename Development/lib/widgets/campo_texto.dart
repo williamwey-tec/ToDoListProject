@@ -71,37 +71,65 @@ class CampoTexto extends StatelessWidget {
   Widget build(BuildContext context) {
     final tema = Theme.of(context);
 
-    return TextFormField(
-      controller: controller,
-      initialValue: controller == null ? valorInicial : null,
-      focusNode: focusNode,
-      enabled: habilitado,
-      readOnly: somenteLeitura,
-      autofocus: autofocus,
-      obscureText: ocultarTexto,
-      minLines: minLinhas,
-      maxLines: maxLinhas,
-      maxLength: maxCaracteres,
-      keyboardType: tipoTeclado,
-      textInputAction: acaoTeclado,
-      textCapitalization: capitalizacao,
-      inputFormatters: formatadores,
-      autovalidateMode: modoAutovalidacao,
-      validator: validator,
-      onChanged: onChanged,
-      onTap: onTap,
-      onEditingComplete: onEditingComplete,
-      onFieldSubmitted: onSubmitted,
-      cursorColor: tema.colorScheme.primary,
-      style: tema.textTheme.bodyLarge?.copyWith(fontWeight: FontWeight.w500),
-      decoration: InputDecoration(
-        labelText: rotulo,
-        hintText: dica,
-        errorText: textoErro,
-        floatingLabelBehavior: FloatingLabelBehavior.always,
-        alignLabelWithHint: maxLinhas > 1,
-        prefixIcon: iconePrefixo == null ? null : Icon(iconePrefixo),
-        suffixIcon: iconeSufixo == null ? null : Icon(iconeSufixo),
+    final deslocamentoHorizontal = iconePrefixo == null ? 16.0 : 48.0;
+
+    return Semantics(
+      textField: true,
+      label: rotulo,
+      child: Stack(
+        children: [
+          TextFormField(
+            controller: controller,
+            initialValue: controller == null ? valorInicial : null,
+            focusNode: focusNode,
+            enabled: habilitado,
+            readOnly: somenteLeitura,
+            autofocus: autofocus,
+            obscureText: ocultarTexto,
+            minLines: minLinhas,
+            maxLines: maxLinhas,
+            maxLength: maxCaracteres,
+            keyboardType: tipoTeclado,
+            textInputAction: acaoTeclado,
+            textCapitalization: capitalizacao,
+            inputFormatters: formatadores,
+            autovalidateMode: modoAutovalidacao,
+            validator: validator,
+            onChanged: onChanged,
+            onTap: onTap,
+            onEditingComplete: onEditingComplete,
+            onFieldSubmitted: onSubmitted,
+            cursorColor: tema.colorScheme.primary,
+            style: tema.textTheme.bodyLarge?.copyWith(
+              fontWeight: FontWeight.w500,
+            ),
+            decoration: InputDecoration(
+              hintText: dica,
+              errorText: textoErro,
+              contentPadding: EdgeInsets.fromLTRB(
+                deslocamentoHorizontal,
+                30,
+                iconeSufixo == null ? 16 : 48,
+                12,
+              ),
+              prefixIcon: iconePrefixo == null ? null : Icon(iconePrefixo),
+              suffixIcon: iconeSufixo == null ? null : Icon(iconeSufixo),
+            ),
+          ),
+          Positioned(
+            top: 9,
+            left: deslocamentoHorizontal,
+            right: iconeSufixo == null ? 12 : 44,
+            child: IgnorePointer(
+              child: Text(
+                rotulo,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: tema.inputDecorationTheme.labelStyle,
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }

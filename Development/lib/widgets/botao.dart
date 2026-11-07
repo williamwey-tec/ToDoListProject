@@ -38,7 +38,7 @@ class Botao extends StatelessWidget {
     final tema = Theme.of(context);
     final cores = tema.colorScheme;
     final bool disponivel = onPressed != null && !carregando;
-    final VoidCallback? callbackBotao = carregando ? () {} : onPressed;
+    final VoidCallback? callbackBotao = disponivel ? onPressed : null;
     final Color corFundo;
     final Color corTexto;
     final BorderSide borda;

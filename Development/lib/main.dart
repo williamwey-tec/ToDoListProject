@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import 'control/control_tarefa.dart';
 import 'telas/menu.dart';
 import 'tema/tema_app.dart';
 
@@ -8,7 +9,9 @@ void main() {
 }
 
 class MyApp extends StatelessWidget {
-  const MyApp({super.key});
+  const MyApp({super.key, this.controleTarefa});
+
+  final OperacoesTarefa? controleTarefa;
 
   @override
   Widget build(BuildContext context) {
@@ -16,7 +19,7 @@ class MyApp extends StatelessWidget {
       title: 'FlowTask',
       debugShowCheckedModeBanner: false,
       theme: TemaApp.claro,
-      home: const Menu(),
+      home: Menu(controleTarefa: controleTarefa),
     );
   }
 }

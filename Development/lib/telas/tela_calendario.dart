@@ -19,7 +19,9 @@ String _formatarDuracao(Duration? duracao) {
 /// Calendário interativo e listagem de tarefas da data selecionada
 /// seguindo fielmente o protótipo em `Design/Calendário.jpg`.
 class TelaCalendario extends StatefulWidget {
-  const TelaCalendario({super.key});
+  const TelaCalendario({super.key, this.onDataSelecionada});
+
+  final ValueChanged<DateTime>? onDataSelecionada;
 
   @override
   State<TelaCalendario> createState() => _TelaCalendarioState();
@@ -302,6 +304,7 @@ class _TelaCalendarioState extends State<TelaCalendario> {
                         _diaSelecionado = selectedDay;
                         _mesFocado = focusedDay;
                       });
+                      widget.onDataSelecionada?.call(selectedDay);
                     },
                     onPageChanged: (focusedDay) {
                       setState(() {
