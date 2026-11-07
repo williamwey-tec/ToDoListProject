@@ -46,6 +46,12 @@ class _OperacoesTarefaIndisponiveis implements OperacoesTarefa {
       _indisponivel();
 
   @override
+  Future<Tarefa> concluirTarefa(int identificador) => _indisponivel();
+
+  @override
+  Future<Tarefa> reabrirTarefa(int identificador) => _indisponivel();
+
+  @override
   Future<void> excluirTarefa(int identificador) => _indisponivel();
 
   @override
@@ -64,9 +70,10 @@ class _OperacoesTarefaIndisponiveis implements OperacoesTarefa {
 
 /// Contêiner da navegação principal do FlowTask.
 class Menu extends StatefulWidget {
-  const Menu({super.key, this.controleTarefa});
+  const Menu({super.key, this.controleTarefa, this.relogio = DateTime.now});
 
   final OperacoesTarefa? controleTarefa;
+  final RelogioTarefa relogio;
 
   @override
   State<Menu> createState() => _MenuState();
@@ -74,7 +81,8 @@ class Menu extends StatefulWidget {
 
 class _MenuState extends State<Menu> {
   int _indiceSelecionado = 0;
-  DateTime _dataSelecionadaCalendario = DateTime(2026, 10, 8);
+  late DateTime _dataSelecionadaCalendario;
+  int _revisaoTarefas = 0;
   BancoService? _banco;
   OperacoesTarefa? _controleTarefa;
 
@@ -109,6 +117,13 @@ class _MenuState extends State<Menu> {
     ),
   ];
 
+  @override
+  void initState() {
+    super.initState();
+    final hoje = widget.relogio();
+    _dataSelecionadaCalendario = DateTime(hoje.year, hoje.month, hoje.day);
+  }
+
   OperacoesTarefa _obterControleTarefa() {
     final injetado = widget.controleTarefa;
     if (injetado != null) return injetado;
@@ -122,7 +137,10 @@ class _MenuState extends State<Menu> {
 
     final banco = BancoService();
     _banco = banco;
-    return _controleTarefa = ControlTarefa(banco: banco);
+    return _controleTarefa = ControlTarefa(
+      banco: banco,
+      relogio: widget.relogio,
+    );
   }
 
   void _informarBancoIndisponivel() {
@@ -135,12 +153,16 @@ class _MenuState extends State<Menu> {
     );
   }
 
+  void _registrarAlteracaoTarefas() {
+    if (mounted) setState(() => _revisaoTarefas++);
+  }
+
   Future<void> _abrirNovaTarefa() async {
     try {
       final controle = _obterControleTarefa();
       final dataInicial = _indiceSelecionado == 1
           ? _dataSelecionadaCalendario
-          : DateTime.now();
+          : widget.relogio();
       final alterou = await Navigator.of(context).push<bool>(
         MaterialPageRoute<bool>(
           builder: (_) =>
@@ -148,6 +170,7 @@ class _MenuState extends State<Menu> {
         ),
       );
       if (alterou == true && mounted) {
+        _registrarAlteracaoTarefas();
         ScaffoldMessenger.of(
           context,
         ).showSnackBar(const SnackBar(content: Text('Tarefa salva.')));
@@ -162,7 +185,10 @@ class _MenuState extends State<Menu> {
       final controle = _obterControleTarefa();
       await Navigator.of(context).push<void>(
         MaterialPageRoute<void>(
-          builder: (_) => TelaTarefasSalvas(controleTarefa: controle),
+          builder: (_) => TelaTarefasSalvas(
+            controleTarefa: controle,
+            onTarefasAlteradas: _registrarAlteracaoTarefas,
+          ),
         ),
       );
     } catch (_) {
@@ -256,8 +282,18 @@ class _MenuState extends State<Menu> {
       body: IndexedStack(
         index: _indiceSelecionado,
         children: [
-          const TelaHoje(),
+          TelaHoje(
+            controleTarefa: _obterControleTarefa(),
+            relogio: widget.relogio,
+            revisaoTarefas: _revisaoTarefas,
+            onTarefasAlteradas: _registrarAlteracaoTarefas,
+            onNovaTarefa: _abrirNovaTarefa,
+          ),
           TelaCalendario(
+            controleTarefa: _obterControleTarefa(),
+            relogio: widget.relogio,
+            revisaoTarefas: _revisaoTarefas,
+            onTarefasAlteradas: _registrarAlteracaoTarefas,
             onDataSelecionada: (data) {
               _dataSelecionadaCalendario = data;
             },
@@ -270,6 +306,9 @@ class _MenuState extends State<Menu> {
         selectedIndex: _indiceSelecionado,
         onDestinationSelected: (indice) {
           setState(() {
+            if ((indice == 0 || indice == 1) && indice != _indiceSelecionado) {
+              _revisaoTarefas++;
+            }
             _indiceSelecionado = indice;
           });
         },

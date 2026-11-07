@@ -25,6 +25,10 @@ abstract interface class OperacoesTarefa {
 
   Future<Tarefa> editarTarefa(int identificador, Tarefa dadosEditados);
 
+  Future<Tarefa> concluirTarefa(int identificador);
+
+  Future<Tarefa> reabrirTarefa(int identificador);
+
   Future<void> excluirTarefa(int identificador);
 }
 
@@ -165,6 +169,7 @@ class ControlTarefa implements OperacoesTarefa {
   }
 
   /// Marca a tarefa como concluída, preservando todos os demais dados.
+  @override
   Future<Tarefa> concluirTarefa(int identificador) async {
     _validarIdentificador(identificador);
     final atual = await _obterExistente(identificador);
@@ -174,6 +179,7 @@ class ControlTarefa implements OperacoesTarefa {
   }
 
   /// Reabre uma tarefa concluída e recalcula imediatamente seu atraso.
+  @override
   Future<Tarefa> reabrirTarefa(int identificador) async {
     _validarIdentificador(identificador);
     final atual = await _obterExistente(identificador);

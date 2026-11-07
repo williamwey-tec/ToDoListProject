@@ -9,9 +9,10 @@ void main() {
 }
 
 class MyApp extends StatelessWidget {
-  const MyApp({super.key, this.controleTarefa});
+  const MyApp({super.key, this.controleTarefa, this.relogio = DateTime.now});
 
   final OperacoesTarefa? controleTarefa;
+  final RelogioTarefa relogio;
 
   @override
   Widget build(BuildContext context) {
@@ -19,7 +20,7 @@ class MyApp extends StatelessWidget {
       title: 'FlowTask',
       debugShowCheckedModeBanner: false,
       theme: TemaApp.claro,
-      home: Menu(controleTarefa: controleTarefa),
+      home: Menu(controleTarefa: controleTarefa, relogio: relogio),
     );
   }
 }

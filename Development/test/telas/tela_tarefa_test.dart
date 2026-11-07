@@ -11,6 +11,7 @@ import 'package:to_do_list/services/banco_service.dart';
 import 'package:to_do_list/telas/tela_tarefa.dart';
 import 'package:to_do_list/telas/tela_tarefas_salvas.dart';
 import 'package:to_do_list/tema/tema_app.dart';
+import 'package:to_do_list/widgets/card_tarefa.dart';
 
 class _OperacoesTarefaFake implements OperacoesTarefa {
   final List<Tarefa> _tarefas = [];
@@ -55,6 +56,28 @@ class _OperacoesTarefaFake implements OperacoesTarefa {
     );
     _tarefas[indice] = editada;
     return editada;
+  }
+
+  @override
+  Future<Tarefa> concluirTarefa(int identificador) async {
+    final indice = _tarefas.indexWhere(
+      (tarefa) => tarefa.identificador == identificador,
+    );
+    if (indice < 0) throw TarefaNaoEncontradaException(identificador);
+    return _tarefas[indice] = _tarefas[indice].copiarComStatus(
+      StatusTarefa.concluida,
+    );
+  }
+
+  @override
+  Future<Tarefa> reabrirTarefa(int identificador) async {
+    final indice = _tarefas.indexWhere(
+      (tarefa) => tarefa.identificador == identificador,
+    );
+    if (indice < 0) throw TarefaNaoEncontradaException(identificador);
+    return _tarefas[indice] = _tarefas[indice].copiarComStatus(
+      StatusTarefa.pendente,
+    );
   }
 
   @override
@@ -286,7 +309,9 @@ void main() {
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
 
-    await tester.pumpWidget(MyApp(controleTarefa: controle));
+    await tester.pumpWidget(
+      MyApp(controleTarefa: controle, relogio: () => DateTime(2026, 10, 8)),
+    );
     await tester.tap(find.byTooltip('Nova tarefa'));
     await tester.pumpAndSettle();
     expect(find.text('Nova tarefa'), findsOneWidget);
@@ -302,6 +327,108 @@ void main() {
 
     final campoData = tester.widget<TextFormField>(campo('campo_data'));
     expect(campoData.controller?.text, '05/10/2026');
+
+    await tester.enterText(campo('campo_titulo'), 'Tarefa pelo calendário');
+    await tester.enterText(campo('campo_duracao'), '25');
+    await tester.ensureVisible(find.text('Salvar tarefa'));
+    await tester.tap(find.text('Salvar tarefa'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Segunda, 5 de outubro'), findsOneWidget);
+    expect(find.text('Tarefa pelo calendário'), findsOneWidget);
+    expect(find.byKey(const ValueKey('marcador_2026-10-5')), findsOneWidget);
+
+    await tester.tap(find.byIcon(Icons.checklist_outlined));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byIcon(Icons.calendar_today_outlined));
+    await tester.pumpAndSettle();
+    expect(find.text('Segunda, 5 de outubro'), findsOneWidget);
+    expect(find.text('Tarefa pelo calendário'), findsOneWidget);
+  });
+
+  testWidgets('alterações em Hoje e Calendário permanecem sincronizadas', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(900, 1200);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    final criada = await controle.criarTarefa(
+      Tarefa(
+        titulo: 'Tarefa compartilhada',
+        data: DateTime(2026, 10, 8),
+        horario: HorarioTarefa(hora: 9, minuto: 0),
+        duracaoEstimada: const Duration(minutes: 30),
+      ),
+    );
+    await tester.pumpWidget(
+      MyApp(controleTarefa: controle, relogio: () => DateTime(2026, 10, 8, 10)),
+    );
+    await tester.pumpAndSettle();
+
+    final cardHoje = find.ancestor(
+      of: find.text('Tarefa compartilhada'),
+      matching: find.byType(CardTarefa),
+    );
+    await tester.tap(
+      find.descendant(of: cardHoje, matching: find.byType(IconButton)),
+    );
+    await tester.pumpAndSettle();
+    expect(
+      (await controle.consultarTarefaPorId(criada.identificador!))?.status,
+      StatusTarefa.concluida,
+    );
+    expect(find.text('1 de 1 tarefas concluídas'), findsOneWidget);
+
+    await tester.tap(find.byIcon(Icons.calendar_today_outlined));
+    await tester.pumpAndSettle();
+    expect(find.text('Tarefa compartilhada'), findsOneWidget);
+    expect(find.text('1 concluída'), findsOneWidget);
+
+    await tester.tap(find.text('Tarefa compartilhada'));
+    await tester.pumpAndSettle();
+    await tester.enterText(campo('campo_titulo'), 'Tarefa movida');
+    await tester.tap(campo('campo_data'));
+    await tester.pumpAndSettle();
+    await tester.tap(
+      find.descendant(
+        of: find.byType(DatePickerDialog),
+        matching: find.text('9'),
+      ),
+    );
+    await tester.tap(find.text('Confirmar'));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('Salvar alterações'));
+    await tester.tap(find.text('Salvar alterações'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Tarefa compartilhada'), findsNothing);
+    expect(find.byKey(const ValueKey('marcador_2026-10-9')), findsOneWidget);
+    await tester.tap(find.text('9'));
+    await tester.pumpAndSettle();
+    expect(find.text('Tarefa movida'), findsOneWidget);
+
+    await tester.tap(find.byIcon(Icons.checklist_outlined));
+    await tester.pumpAndSettle();
+    expect(find.text('Tarefa movida'), findsNothing);
+    expect(find.text('Nenhuma tarefa para hoje.'), findsOneWidget);
+
+    await tester.tap(find.byIcon(Icons.calendar_today_outlined));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Tarefa movida'));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('Excluir tarefa'));
+    await tester.tap(find.text('Excluir tarefa'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, 'Excluir'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Tarefa movida'), findsNothing);
+    expect(
+      find.text('Nenhuma tarefa planejada para este dia.'),
+      findsOneWidget,
+    );
   });
 
   testWidgets('formulário permanece rolável em tela estreita', (tester) async {

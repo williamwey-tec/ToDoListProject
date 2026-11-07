@@ -6,12 +6,16 @@ import '../model/tarefa.dart';
 import '../tema/cores.dart';
 import 'tela_tarefa.dart';
 
-/// Acesso auxiliar às tarefas reais sem substituir os dados demonstrativos do
-/// Calendário antes da FT-07.
+/// Acesso auxiliar a todas as tarefas persistidas no dispositivo.
 class TelaTarefasSalvas extends StatefulWidget {
-  const TelaTarefasSalvas({super.key, required this.controleTarefa});
+  const TelaTarefasSalvas({
+    super.key,
+    required this.controleTarefa,
+    this.onTarefasAlteradas,
+  });
 
   final OperacoesTarefa controleTarefa;
+  final VoidCallback? onTarefasAlteradas;
 
   @override
   State<TelaTarefasSalvas> createState() => _TelaTarefasSalvasState();
@@ -61,7 +65,10 @@ class _TelaTarefasSalvasState extends State<TelaTarefasSalvas> {
             TelaTarefa(controleTarefa: widget.controleTarefa, tarefa: tarefa),
       ),
     );
-    if (alterou == true && mounted) await _carregar();
+    if (alterou == true && mounted) {
+      widget.onTarefasAlteradas?.call();
+      await _carregar();
+    }
   }
 
   String _formatarData(DateTime data) {

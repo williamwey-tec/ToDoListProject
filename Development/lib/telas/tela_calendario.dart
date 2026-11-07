@@ -1,8 +1,12 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:table_calendar/table_calendar.dart';
+
+import '../control/control_tarefa.dart';
 import '../model/tarefa.dart';
 import '../tema/cores.dart';
 import '../widgets/card_tarefa.dart';
+import 'tela_tarefa.dart';
 
 String _formatarHorario(HorarioTarefa? horario) {
   if (horario == null) return 'Sem horário';
@@ -19,9 +23,20 @@ String _formatarDuracao(Duration? duracao) {
 /// Calendário interativo e listagem de tarefas da data selecionada
 /// seguindo fielmente o protótipo em `Design/Calendário.jpg`.
 class TelaCalendario extends StatefulWidget {
-  const TelaCalendario({super.key, this.onDataSelecionada});
+  const TelaCalendario({
+    super.key,
+    required this.controleTarefa,
+    this.onDataSelecionada,
+    this.onTarefasAlteradas,
+    this.relogio = DateTime.now,
+    this.revisaoTarefas = 0,
+  });
 
+  final OperacoesTarefa controleTarefa;
   final ValueChanged<DateTime>? onDataSelecionada;
+  final VoidCallback? onTarefasAlteradas;
+  final RelogioTarefa relogio;
+  final int revisaoTarefas;
 
   @override
   State<TelaCalendario> createState() => _TelaCalendarioState();
@@ -63,133 +78,130 @@ class _TelaCalendarioState extends State<TelaCalendario> {
     'D',
   ];
 
-  DateTime _mesFocado = DateTime(2026, 10, 8);
-  DateTime _diaSelecionado = DateTime(2026, 10, 8);
-
-  // Mapa de tarefas por data (normalizada ano/mês/dia) para demonstração e interação
-  late final Map<DateTime, List<Tarefa>> _tarefasPorDia;
+  late DateTime _mesFocado;
+  late DateTime _diaSelecionado;
+  Map<DateTime, List<Tarefa>> _tarefasPorDia = const {};
+  final Set<int> _tarefasAlterandoStatus = <int>{};
+  bool _carregando = true;
+  String? _erroCarregamento;
+  int _versaoCarregamento = 0;
 
   @override
   void initState() {
     super.initState();
-    _tarefasPorDia = _criarDadosIniciais();
+    final hoje = _normalizarData(widget.relogio());
+    _mesFocado = hoje;
+    _diaSelecionado = hoje;
+    _carregarMes(_mesFocado);
+  }
+
+  @override
+  void didUpdateWidget(covariant TelaCalendario oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.controleTarefa != widget.controleTarefa ||
+        oldWidget.revisaoTarefas != widget.revisaoTarefas) {
+      _carregarMes(_mesFocado);
+    }
+  }
+
+  @override
+  void dispose() {
+    _versaoCarregamento++;
+    super.dispose();
   }
 
   DateTime _normalizarData(DateTime data) =>
       DateTime(data.year, data.month, data.day);
 
-  Map<DateTime, List<Tarefa>> _criarDadosIniciais() {
-    final mapa = <DateTime, List<Tarefa>>{};
+  Future<void> _carregarMes(DateTime mes) async {
+    final versao = ++_versaoCarregamento;
+    final inicio = DateTime(mes.year, mes.month);
+    final fim = DateTime(mes.year, mes.month + 1, 0);
 
-    // Tarefas detalhadas do dia 8 de outubro de 2026 (conforme protótipo)
-    mapa[DateTime(2026, 10, 8)] = [
-      Tarefa(
-        titulo: 'Organizar e-mails',
-        data: DateTime(2026, 10, 8),
-        horario: HorarioTarefa(hora: 8, minuto: 0),
-        duracaoEstimada: const Duration(minutes: 20),
-        tempoRegistrado: const Duration(minutes: 15),
-        prioridade: PrioridadeTarefa.baixa,
-        status: StatusTarefa.concluida,
-      ),
-      Tarefa(
-        titulo: 'Planejar o dia',
-        data: DateTime(2026, 10, 8),
-        horario: HorarioTarefa(hora: 9, minuto: 0),
-        duracaoEstimada: const Duration(minutes: 15),
-        tempoRegistrado: const Duration(minutes: 15),
-        prioridade: PrioridadeTarefa.baixa,
-        status: StatusTarefa.concluida,
-      ),
-      Tarefa(
-        titulo: 'Ler referências',
-        data: DateTime(2026, 10, 8),
-        horario: HorarioTarefa(hora: 10, minuto: 0),
-        duracaoEstimada: const Duration(minutes: 30),
-        tempoRegistrado: const Duration(minutes: 25),
-        prioridade: PrioridadeTarefa.media,
-        status: StatusTarefa.concluida,
-      ),
-      Tarefa(
-        titulo: 'Enviar relatório',
-        data: DateTime(2026, 10, 8),
-        horario: HorarioTarefa(hora: 13, minuto: 0),
-        duracaoEstimada: const Duration(minutes: 30),
-        prioridade: PrioridadeTarefa.alta,
-        status: StatusTarefa.atrasada,
-      ),
-      Tarefa(
-        titulo: 'Revisar apresentação',
-        data: DateTime(2026, 10, 8),
-        horario: HorarioTarefa(hora: 14, minuto: 0),
-        duracaoEstimada: const Duration(minutes: 45),
-        tempoRegistrado: const Duration(minutes: 20),
-        prioridade: PrioridadeTarefa.alta,
-        status: StatusTarefa.pausada,
-      ),
-      Tarefa(
-        titulo: 'Consulta médica',
-        data: DateTime(2026, 10, 8),
-        horario: HorarioTarefa(hora: 16, minuto: 0),
-        duracaoEstimada: const Duration(minutes: 45),
-        prioridade: PrioridadeTarefa.media,
-        status: StatusTarefa.pendente,
-      ),
-      Tarefa(
-        titulo: 'Estudar Flutter',
-        data: DateTime(2026, 10, 8),
-        horario: HorarioTarefa(hora: 19, minuto: 0),
-        duracaoEstimada: const Duration(minutes: 60),
-        prioridade: PrioridadeTarefa.baixa,
-        status: StatusTarefa.pendente,
-      ),
-    ];
+    setState(() {
+      _tarefasPorDia = const {};
+      _carregando = true;
+      _erroCarregamento = null;
+    });
 
-    // Outros dias do mês marcados com tarefas conforme os indicadores do protótipo
-    const diasComTarefas = [5, 6, 7, 12, 14, 16, 19, 21, 23, 26, 28];
-    for (final dia in diasComTarefas) {
-      mapa[DateTime(2026, 10, dia)] = [
-        Tarefa(
-          titulo: 'Planejamento de estudos',
-          data: DateTime(2026, 10, dia),
-          horario: HorarioTarefa(hora: 9, minuto: 0),
-          duracaoEstimada: const Duration(minutes: 45),
-          prioridade: PrioridadeTarefa.media,
-          status: StatusTarefa.pendente,
-        ),
-        Tarefa(
-          titulo: 'Revisão da Sprint FlowTask',
-          data: DateTime(2026, 10, dia),
-          horario: HorarioTarefa(hora: 14, minuto: 0),
-          duracaoEstimada: const Duration(minutes: 30),
-          tempoRegistrado: const Duration(minutes: 30),
-          prioridade: PrioridadeTarefa.alta,
-          status: StatusTarefa.concluida,
-        ),
-      ];
+    try {
+      final tarefas = await widget.controleTarefa.consultarTarefasPorIntervalo(
+        inicio,
+        fim,
+      );
+      if (!mounted || versao != _versaoCarregamento) return;
+
+      final porDia = <DateTime, List<Tarefa>>{};
+      for (final tarefa in tarefas) {
+        porDia.putIfAbsent(_normalizarData(tarefa.data), () => []).add(tarefa);
+      }
+      setState(() {
+        _tarefasPorDia = porDia;
+        _carregando = false;
+      });
+    } catch (_) {
+      if (!mounted || versao != _versaoCarregamento) return;
+      setState(() {
+        _tarefasPorDia = const {};
+        _carregando = false;
+        _erroCarregamento = kIsWeb
+            ? 'O armazenamento de tarefas não está disponível no navegador.'
+            : 'Não foi possível carregar as tarefas deste mês.';
+      });
     }
-
-    return mapa;
   }
 
   List<Tarefa> _obterTarefasDoDia(DateTime dia) {
     return _tarefasPorDia[_normalizarData(dia)] ?? [];
   }
 
-  void _alternarStatusTarefa(Tarefa tarefa) {
-    setState(() {
-      final data = _normalizarData(tarefa.data);
-      final tarefas = _tarefasPorDia[data];
-      if (tarefas == null) return;
+  Future<void> _registrarAlteracao() async {
+    final callback = widget.onTarefasAlteradas;
+    if (callback != null) {
+      callback();
+    } else {
+      await _carregarMes(_mesFocado);
+    }
+  }
 
-      final indice = tarefas.indexOf(tarefa);
-      if (indice < 0) return;
+  Future<void> _alternarStatusTarefa(Tarefa tarefa) async {
+    final identificador = tarefa.identificador;
+    if (identificador == null ||
+        _tarefasAlterandoStatus.contains(identificador)) {
+      return;
+    }
 
-      final novoStatus = tarefa.status == StatusTarefa.concluida
-          ? StatusTarefa.pendente
-          : StatusTarefa.concluida;
-      tarefas[indice] = tarefa.copiarComStatus(novoStatus);
-    });
+    setState(() => _tarefasAlterandoStatus.add(identificador));
+    try {
+      if (tarefa.status == StatusTarefa.concluida) {
+        await widget.controleTarefa.reabrirTarefa(identificador);
+      } else {
+        await widget.controleTarefa.concluirTarefa(identificador);
+      }
+      if (mounted) await _registrarAlteracao();
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Não foi possível atualizar a situação da tarefa.'),
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _tarefasAlterandoStatus.remove(identificador));
+      }
+    }
+  }
+
+  Future<void> _abrirEdicao(Tarefa tarefa) async {
+    final alterou = await Navigator.of(context).push<bool>(
+      MaterialPageRoute<bool>(
+        builder: (_) =>
+            TelaTarefa(controleTarefa: widget.controleTarefa, tarefa: tarefa),
+      ),
+    );
+    if (alterou == true && mounted) await _registrarAlteracao();
   }
 
   String _formatarMesAno(DateTime data) {
@@ -201,6 +213,11 @@ class _TelaCalendarioState extends State<TelaCalendario> {
     final diaSemana = _nomesDiasSemana[data.weekday - 1];
     final mes = _nomesMeses[data.month - 1].toLowerCase();
     return '$diaSemana, ${data.day} de $mes';
+  }
+
+  String _formatarHoje() {
+    final hoje = _normalizarData(widget.relogio());
+    return 'hoje, ${hoje.day} de ${_nomesMeses[hoje.month - 1].toLowerCase()}';
   }
 
   String _construirResumoContagem(List<Tarefa> tarefas) {
@@ -300,16 +317,36 @@ class _TelaCalendarioState extends State<TelaCalendario> {
                     daysOfWeekHeight: 32,
                     rowHeight: 50,
                     onDaySelected: (selectedDay, focusedDay) {
+                      final mudouMes =
+                          selectedDay.year != _mesFocado.year ||
+                          selectedDay.month != _mesFocado.month;
+                      final novoFoco = mudouMes ? selectedDay : focusedDay;
                       setState(() {
-                        _diaSelecionado = selectedDay;
-                        _mesFocado = focusedDay;
+                        _diaSelecionado = _normalizarData(selectedDay);
+                        _mesFocado = novoFoco;
                       });
-                      widget.onDataSelecionada?.call(selectedDay);
+                      widget.onDataSelecionada?.call(_diaSelecionado);
+                      if (mudouMes) _carregarMes(novoFoco);
                     },
                     onPageChanged: (focusedDay) {
+                      final ultimoDia = DateTime(
+                        focusedDay.year,
+                        focusedDay.month + 1,
+                        0,
+                      ).day;
+                      final diaPreservado = _diaSelecionado.day > ultimoDia
+                          ? ultimoDia
+                          : _diaSelecionado.day;
                       setState(() {
                         _mesFocado = focusedDay;
+                        _diaSelecionado = DateTime(
+                          focusedDay.year,
+                          focusedDay.month,
+                          diaPreservado,
+                        );
                       });
+                      widget.onDataSelecionada?.call(_diaSelecionado);
+                      _carregarMes(focusedDay);
                     },
                     calendarBuilders: CalendarBuilders(
                       dowBuilder: (context, day) {
@@ -366,12 +403,14 @@ class _TelaCalendarioState extends State<TelaCalendario> {
                           ),
                         ),
                         const SizedBox(width: 8),
-                        const Text(
-                          'Dias com tarefas · hoje, 8 de outubro',
-                          style: TextStyle(
-                            color: CoresApp.textoSecundario,
-                            fontSize: 13,
-                            fontWeight: FontWeight.w500,
+                        Expanded(
+                          child: Text(
+                            'Dias com tarefas · ${_formatarHoje()}',
+                            style: const TextStyle(
+                              color: CoresApp.textoSecundario,
+                              fontSize: 13,
+                              fontWeight: FontWeight.w500,
+                            ),
                           ),
                         ),
                       ],
@@ -395,7 +434,11 @@ class _TelaCalendarioState extends State<TelaCalendario> {
                   ),
                 ),
                 Text(
-                  '${tarefasDoDia.length} ${tarefasDoDia.length == 1 ? 'tarefa' : 'tarefas'}',
+                  _carregando
+                      ? 'Carregando...'
+                      : _erroCarregamento != null
+                      ? 'Indisponível'
+                      : '${tarefasDoDia.length} ${tarefasDoDia.length == 1 ? 'tarefa' : 'tarefas'}',
                   style: const TextStyle(
                     color: CoresApp.textoSecundario,
                     fontSize: 14,
@@ -406,7 +449,9 @@ class _TelaCalendarioState extends State<TelaCalendario> {
             ),
             const SizedBox(height: 4),
             Text(
-              _construirResumoContagem(tarefasDoDia),
+              _carregando
+                  ? 'Consultando as tarefas do mês'
+                  : _erroCarregamento ?? _construirResumoContagem(tarefasDoDia),
               style: const TextStyle(
                 color: CoresApp.textoSecundario,
                 fontSize: 14,
@@ -416,7 +461,11 @@ class _TelaCalendarioState extends State<TelaCalendario> {
             const SizedBox(height: 16),
 
             // Lista de Tarefas Pendentes / Pausadas / Atrasadas do dia
-            if (tarefasAtivas.isEmpty && tarefasConcluidas.isEmpty)
+            if (_carregando)
+              _construirEstadoCarregamento()
+            else if (_erroCarregamento != null)
+              _construirEstadoErro()
+            else if (tarefasAtivas.isEmpty && tarefasConcluidas.isEmpty)
               Container(
                 width: double.infinity,
                 padding: const EdgeInsets.all(24),
@@ -457,13 +506,19 @@ class _TelaCalendarioState extends State<TelaCalendario> {
                         : null,
                     prioridade: tarefa.prioridade,
                     status: tarefa.status,
-                    onAlternarStatus: () => _alternarStatusTarefa(tarefa),
+                    onTap: () => _abrirEdicao(tarefa),
+                    onAlternarStatus:
+                        _tarefasAlterandoStatus.contains(tarefa.identificador)
+                        ? null
+                        : () => _alternarStatusTarefa(tarefa),
                   ),
                 ),
               ),
 
             // Seção de Tarefas Concluídas
-            if (tarefasConcluidas.isNotEmpty) ...[
+            if (!_carregando &&
+                _erroCarregamento == null &&
+                tarefasConcluidas.isNotEmpty) ...[
               const SizedBox(height: 12),
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -492,13 +547,68 @@ class _TelaCalendarioState extends State<TelaCalendario> {
                   padding: const EdgeInsets.only(bottom: 10),
                   child: _CardTarefaConcluidaCompacto(
                     tarefa: tarefa,
-                    onAlternarStatus: () => _alternarStatusTarefa(tarefa),
+                    onTap: () => _abrirEdicao(tarefa),
+                    onAlternarStatus:
+                        _tarefasAlterandoStatus.contains(tarefa.identificador)
+                        ? null
+                        : () => _alternarStatusTarefa(tarefa),
                   ),
                 ),
               ),
             ],
           ],
         ),
+      ),
+    );
+  }
+
+  Widget _construirEstadoCarregamento() {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(28),
+      decoration: BoxDecoration(
+        color: CoresApp.superficie,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: CoresApp.borda),
+      ),
+      child: const Column(
+        children: [
+          CircularProgressIndicator(),
+          SizedBox(height: 12),
+          Text(
+            'Carregando tarefas...',
+            style: TextStyle(color: CoresApp.textoSecundario),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _construirEstadoErro() {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(24),
+      decoration: BoxDecoration(
+        color: CoresApp.superficie,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: CoresApp.borda),
+      ),
+      child: Column(
+        children: [
+          const Icon(Icons.storage_outlined, color: CoresApp.erro, size: 36),
+          const SizedBox(height: 8),
+          Text(
+            _erroCarregamento!,
+            textAlign: TextAlign.center,
+            style: const TextStyle(color: CoresApp.erro),
+          ),
+          const SizedBox(height: 8),
+          TextButton.icon(
+            onPressed: () => _carregarMes(_mesFocado),
+            icon: const Icon(Icons.refresh_rounded),
+            label: const Text('Tentar novamente'),
+          ),
+        ],
       ),
     );
   }
@@ -530,6 +640,9 @@ class _TelaCalendarioState extends State<TelaCalendario> {
             const SizedBox(height: 2),
             if (possuiTarefas)
               Container(
+                key: ValueKey<String>(
+                  'marcador_${dia.year}-${dia.month}-${dia.day}',
+                ),
                 width: 5,
                 height: 5,
                 decoration: BoxDecoration(
@@ -552,10 +665,12 @@ class _TelaCalendarioState extends State<TelaCalendario> {
 /// conforme o protótipo `Design/Calendário.jpg`.
 class _CardTarefaConcluidaCompacto extends StatelessWidget {
   final Tarefa tarefa;
-  final VoidCallback onAlternarStatus;
+  final VoidCallback onTap;
+  final VoidCallback? onAlternarStatus;
 
   const _CardTarefaConcluidaCompacto({
     required this.tarefa,
+    required this.onTap,
     required this.onAlternarStatus,
   });
 
@@ -567,26 +682,31 @@ class _CardTarefaConcluidaCompacto extends StatelessWidget {
       color: CoresApp.concluidaFundo,
       borderRadius: BorderRadius.circular(18),
       child: InkWell(
-        onTap: onAlternarStatus,
+        onTap: onTap,
         borderRadius: BorderRadius.circular(18),
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
           child: Row(
             children: [
-              Container(
-                width: 24,
-                height: 24,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  border: Border.all(color: CoresApp.concluida, width: 1.8),
-                ),
-                child: const Icon(
-                  Icons.check_rounded,
-                  color: CoresApp.concluida,
-                  size: 16,
+              IconButton(
+                onPressed: onAlternarStatus,
+                tooltip: 'Marcar tarefa como pendente',
+                constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
+                icon: Container(
+                  width: 24,
+                  height: 24,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    border: Border.all(color: CoresApp.concluida, width: 1.8),
+                  ),
+                  child: const Icon(
+                    Icons.check_rounded,
+                    color: CoresApp.concluida,
+                    size: 16,
+                  ),
                 ),
               ),
-              const SizedBox(width: 14),
+              const SizedBox(width: 2),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
