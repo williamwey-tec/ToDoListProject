@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../model/preferencias_notificacoes.dart';
+import '../services/configuracoes_service.dart';
 import '../services/notificacao_service.dart';
 import '../tema/cores.dart';
 
@@ -9,9 +11,11 @@ class TelaNotificacoes extends StatefulWidget {
     super.key,
     this.notificacaoService = const NotificacaoServiceIndisponivel(),
     this.sincronizarLembretes,
+    this.configuracoesService,
   });
 
   final NotificacaoService notificacaoService;
+  final ConfiguracoesService? configuracoesService;
   final Future<RelatorioSincronizacaoLembretes> Function()?
   sincronizarLembretes;
 
@@ -19,14 +23,162 @@ class TelaNotificacoes extends StatefulWidget {
   State<TelaNotificacoes> createState() => _TelaNotificacoesState();
 }
 
-class _TelaNotificacoesState extends State<TelaNotificacoes> {
+class _TelaNotificacoesState extends State<TelaNotificacoes>
+    with WidgetsBindingObserver {
   StatusPermissaoNotificacao? _status;
   bool _carregando = true;
+  bool _salvando = false;
+
+  Future<void> _salvar(PreferenciasNotificacoes preferencias) async {
+    final configuracoes = widget.configuracoesService;
+    if (_salvando || configuracoes == null) return;
+    setState(() => _salvando = true);
+    var mensagem = 'Não foi possível salvar as preferências.';
+    try {
+      await configuracoes.salvarNotificacoes(preferencias);
+      mensagem = 'Preferências salvas.';
+      try {
+        final resultado = await widget.sincronizarLembretes?.call();
+        if (resultado != null && resultado.falhas > 0) {
+          mensagem =
+              'Preferências salvas. Alguns lembretes não foram sincronizados.';
+        }
+      } catch (_) {
+        mensagem =
+            'Preferências salvas. Não foi possível sincronizar os lembretes.';
+      }
+    } catch (_) {
+      // A mensagem mantém o estado da preferência anterior.
+    } finally {
+      if (mounted) setState(() => _salvando = false);
+    }
+    if (mounted) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(mensagem)));
+    }
+  }
+
+  Future<void> _escolherHorario(PreferenciasNotificacoes preferencias) async {
+    final horario = await showTimePicker(
+      context: context,
+      initialTime: TimeOfDay(
+        hour: preferencias.minutosResumo ~/ 60,
+        minute: preferencias.minutosResumo % 60,
+      ),
+    );
+    if (horario == null || !mounted) return;
+    await _salvar(
+      preferencias.copiarCom(minutosResumo: horario.hour * 60 + horario.minute),
+    );
+  }
+
+  Widget _preferencias(ConfiguracoesService configuracoes) => ListenableBuilder(
+    listenable: configuracoes,
+    builder: (context, _) {
+      final p = configuracoes.configuracoes.notificacoes;
+      final hora = TimeOfDay(
+        hour: p.minutosResumo ~/ 60,
+        minute: p.minutosResumo % 60,
+      );
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text('Sua agenda', style: Theme.of(context).textTheme.titleMedium),
+          Card(
+            child: Column(
+              children: [
+                SwitchListTile(
+                  title: const Text('Resumo diário'),
+                  value: p.resumo,
+                  onChanged: _salvando
+                      ? null
+                      : (valor) => _salvar(p.copiarCom(resumo: valor)),
+                ),
+                ListTile(
+                  title: const Text('Horário do resumo'),
+                  subtitle: Text(hora.format(context)),
+                  trailing: const Icon(Icons.schedule),
+                  enabled: p.resumo && !_salvando,
+                  onTap: () => _escolherHorario(p),
+                ),
+                SwitchListTile(
+                  title: const Text('Notificações por bloco'),
+                  subtitle: const Text(
+                    'Manhã 08:00 · tarde 12:00 · noite 18:00',
+                  ),
+                  value: p.blocos,
+                  onChanged: _salvando
+                      ? null
+                      : (valor) => _salvar(p.copiarCom(blocos: valor)),
+                ),
+                SwitchListTile(
+                  title: const Text('Lembretes individuais'),
+                  value: p.individuais,
+                  onChanged: _salvando
+                      ? null
+                      : (valor) => _salvar(p.copiarCom(individuais: valor)),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 12),
+          Text(
+            'Som e vibração',
+            style: Theme.of(context).textTheme.titleMedium,
+          ),
+          Card(
+            child: Column(
+              children: [
+                SwitchListTile(
+                  title: const Text('Som'),
+                  value: p.som,
+                  onChanged: _salvando
+                      ? null
+                      : (valor) => _salvar(p.copiarCom(som: valor)),
+                ),
+                SwitchListTile(
+                  title: const Text('Vibração'),
+                  value: p.vibracao,
+                  onChanged: _salvando
+                      ? null
+                      : (valor) => _salvar(p.copiarCom(vibracao: valor)),
+                ),
+              ],
+            ),
+          ),
+        ],
+      );
+    },
+  );
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _consultarStatus();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed && !_carregando) {
+      _consultarStatus();
+    }
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  Future<void> _gerenciarNoAndroid(NotificacaoServiceAndroid servico) async {
+    if (await servico.abrirConfiguracoesAndroid() || !mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Não foi possível abrir as configurações do Android.'),
+      ),
+    );
   }
 
   Future<void> _consultarStatus() async {
@@ -150,6 +302,10 @@ class _TelaNotificacoesState extends State<TelaNotificacoes> {
             ),
           ),
           const SizedBox(height: 22),
+          if (widget.configuracoesService case final configuracoes?) ...[
+            _preferencias(configuracoes),
+            const SizedBox(height: 22),
+          ],
           Text(
             'Permissão do Android',
             style: Theme.of(
@@ -210,6 +366,15 @@ class _TelaNotificacoesState extends State<TelaNotificacoes> {
                             : 'Permitir notificações',
                       ),
                     ),
+                    if (widget.notificacaoService
+                        case final NotificacaoServiceAndroid servico)
+                      TextButton.icon(
+                        onPressed: _carregando
+                            ? null
+                            : () => _gerenciarNoAndroid(servico),
+                        icon: const Icon(Icons.open_in_new),
+                        label: const Text('Gerenciar no Android'),
+                      ),
                   ],
                 ],
               ),

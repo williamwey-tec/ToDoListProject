@@ -2,6 +2,8 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:timezone/timezone.dart' as tz;
 
+import '../model/aviso_agenda.dart';
+import '../model/preferencias_notificacoes.dart';
 import '../model/tarefa.dart';
 import 'banco_service.dart';
 
@@ -73,21 +75,39 @@ class CoordenadorLembretes {
   Future<ResultadoAgendamentoLembrete> reconciliarTarefa(int identificador) {
     return _emSerie(() async {
       final atual = await _banco.consultarTarefaPorId(identificador);
+      final agora = _relogio();
+      final ResultadoAgendamentoLembrete resultado;
       if (atual == null) {
         await _notificacaoService.cancelarLembrete(identificador);
-        return ResultadoAgendamentoLembrete.desativado;
+        resultado = ResultadoAgendamentoLembrete.desativado;
+      } else {
+        resultado = await _notificacaoService.agendarLembrete(
+          atual,
+          agora: agora,
+        );
       }
-      return _notificacaoService.agendarLembrete(atual, agora: _relogio());
+      final servico = _notificacaoService;
+      if (servico is NotificacaoServiceAndroid) {
+        await servico.sincronizarAgenda(
+          await _banco.consultarTodasTarefas(),
+          agora,
+        );
+      }
+      return resultado;
     });
   }
 
-  Future<RelatorioSincronizacaoLembretes> sincronizar() {
+  Future<RelatorioSincronizacaoLembretes> sincronizar({
+    List<int> removidos = const [],
+  }) {
     return _emSerie(() async {
-      final tarefas = await _banco.consultarTodasTarefas();
-      return _notificacaoService.sincronizarLembretes(
-        tarefas,
-        agora: _relogio(),
-      );
+      final agora = _relogio();
+      final ate = DateTime(agora.year, agora.month, agora.day + 30);
+      final tarefas = await _banco.consultarTodasTarefas(materializarAte: ate);
+      for (final id in removidos) {
+        await _notificacaoService.cancelarLembrete(id);
+      }
+      return _notificacaoService.sincronizarLembretes(tarefas, agora: agora);
     });
   }
 
@@ -131,44 +151,74 @@ class NotificacaoServiceIndisponivel implements NotificacaoService {
   );
 }
 
-/// Agenda um único lembrete inexato por tarefa no Android.
-///
-/// O modo inexato evita exigir o acesso especial a alarmes exatos. O Android
-/// pode atrasar a entrega para economizar bateria, por isso o resultado deixa
-/// essa limitação explícita para a interface.
-class NotificacaoServiceAndroid implements NotificacaoService {
-  NotificacaoServiceAndroid({FlutterLocalNotificationsPlugin? plugin})
-    : _plugin = plugin ?? FlutterLocalNotificationsPlugin();
+enum AcaoNotificacao { abrir, concluir, adiar }
 
-  static const _canalId = 'lembretes_individuais';
-  static const _prefixoPayload = 'tarefa:';
+class RespostaLembrete {
+  const RespostaLembrete(this.acao, this.tarefaId);
+
+  final AcaoNotificacao acao;
+  final int tarefaId;
+
+  static RespostaLembrete? interpretar(String? payload, String? acao) {
+    final partes = payload?.split('|').first.split(':');
+    if (partes == null ||
+        partes.length != 2 ||
+        !['tarefa', 'agenda'].contains(partes.first)) {
+      return null;
+    }
+    final id = int.tryParse(partes.last);
+    if (id == null || id <= 0) return null;
+    return RespostaLembrete(switch (acao) {
+      'concluir' => AcaoNotificacao.concluir,
+      'adiar' => AcaoNotificacao.adiar,
+      _ => AcaoNotificacao.abrir,
+    }, id);
+  }
+}
+
+/// Agendamento local Android com canais estáveis para cada combinação de som e vibração.
+class NotificacaoServiceAndroid implements NotificacaoService {
+  NotificacaoServiceAndroid({
+    FlutterLocalNotificationsPlugin? plugin,
+    this.carregarPreferencias,
+    this.onResposta,
+  }) : _plugin = plugin ?? FlutterLocalNotificationsPlugin();
+
   static const _icone = 'ic_stat_flowtask';
+  static const _prefixoTarefa = 'tarefa:';
+  static const _prefixoAgenda = 'agenda:';
 
   final FlutterLocalNotificationsPlugin _plugin;
+  final Future<PreferenciasNotificacoes> Function()? carregarPreferencias;
+  final void Function(RespostaLembrete)? onResposta;
   Future<bool>? _inicializacao;
 
-  @override
-  Future<StatusPermissaoNotificacao> consultarPermissao() async {
-    if (!await _garantirInicializacao()) {
-      return StatusPermissaoNotificacao.indisponivel;
-    }
+  Future<PreferenciasNotificacoes> _preferencias() async =>
+      await carregarPreferencias?.call() ?? const PreferenciasNotificacoes();
+
+  Future<bool> abrirConfiguracoesAndroid() async {
+    if (!await _garantirInicializacao()) return false;
     try {
       final android = _plugin
           .resolvePlatformSpecificImplementation<
             AndroidFlutterLocalNotificationsPlugin
           >();
-      final permitida = await android?.areNotificationsEnabled();
-      if (permitida == null) return StatusPermissaoNotificacao.erro;
-      return permitida
-          ? StatusPermissaoNotificacao.permitida
-          : StatusPermissaoNotificacao.negada;
+      return await android?.openAppNotificationSettings() == true;
     } catch (_) {
-      return StatusPermissaoNotificacao.erro;
+      return false;
     }
   }
 
   @override
-  Future<StatusPermissaoNotificacao> solicitarPermissao() async {
+  Future<StatusPermissaoNotificacao> consultarPermissao() => _permissao();
+
+  @override
+  Future<StatusPermissaoNotificacao> solicitarPermissao() =>
+      _permissao(solicitar: true);
+
+  Future<StatusPermissaoNotificacao> _permissao({
+    bool solicitar = false,
+  }) async {
     if (!await _garantirInicializacao()) {
       return StatusPermissaoNotificacao.indisponivel;
     }
@@ -177,8 +227,10 @@ class NotificacaoServiceAndroid implements NotificacaoService {
           .resolvePlatformSpecificImplementation<
             AndroidFlutterLocalNotificationsPlugin
           >();
-      final permitida = await android?.requestNotificationsPermission();
-      if (permitida == null) return await consultarPermissao();
+      final permitida = solicitar
+          ? await android?.requestNotificationsPermission()
+          : await android?.areNotificationsEnabled();
+      if (permitida == null) return StatusPermissaoNotificacao.erro;
       return permitida
           ? StatusPermissaoNotificacao.permitida
           : StatusPermissaoNotificacao.negada;
@@ -192,52 +244,42 @@ class NotificacaoServiceAndroid implements NotificacaoService {
     Tarefa tarefa, {
     required DateTime agora,
   }) async {
-    final identificador = tarefa.identificador;
-    if (identificador == null || identificador <= 0) {
-      return ResultadoAgendamentoLembrete.falha;
-    }
-    if (!tarefa.lembreteAtivo) {
-      await _cancelarSemFalhar(identificador);
-      return ResultadoAgendamentoLembrete.desativado;
-    }
-    if (tarefa.status == StatusTarefa.concluida) {
-      await _cancelarSemFalhar(identificador);
-      return ResultadoAgendamentoLembrete.tarefaConcluida;
-    }
-    final horario = tarefa.horario;
-    if (horario == null) {
-      await _cancelarSemFalhar(identificador);
-      return ResultadoAgendamentoLembrete.horarioAusente;
-    }
-
-    final instanteLocal = DateTime(
-      tarefa.data.year,
-      tarefa.data.month,
-      tarefa.data.day,
-      horario.hora,
-      horario.minuto,
-    ).subtract(tarefa.antecedenciaLembrete);
-    if (!instanteLocal.isAfter(agora)) {
-      await _cancelarSemFalhar(identificador);
-      return ResultadoAgendamentoLembrete.horarioPassado;
-    }
-
+    final id = tarefa.identificador;
+    if (id == null || id <= 0) return ResultadoAgendamentoLembrete.falha;
+    final preferencias = await _preferencias();
+    final horario = _instanteLembrete(tarefa, preferencias);
     final permissao = await consultarPermissao();
-    if (permissao == StatusPermissaoNotificacao.negada) {
-      await _cancelarSemFalhar(identificador);
-      return ResultadoAgendamentoLembrete.permissaoNegada;
-    }
     if (permissao == StatusPermissaoNotificacao.indisponivel) {
       return ResultadoAgendamentoLembrete.indisponivel;
+    }
+    if (tarefa.status == StatusTarefa.concluida ||
+        horario == null ||
+        !horario.isAfter(agora) ||
+        permissao == StatusPermissaoNotificacao.negada) {
+      await cancelarLembrete(id);
+      if (tarefa.status == StatusTarefa.concluida) {
+        return ResultadoAgendamentoLembrete.tarefaConcluida;
+      }
+      if (horario == null) {
+        return tarefa.lembreteAtivo && preferencias.individuais
+            ? ResultadoAgendamentoLembrete.horarioAusente
+            : ResultadoAgendamentoLembrete.desativado;
+      }
+      return !horario.isAfter(agora)
+          ? ResultadoAgendamentoLembrete.horarioPassado
+          : ResultadoAgendamentoLembrete.permissaoNegada;
     }
     if (permissao != StatusPermissaoNotificacao.permitida) {
       return ResultadoAgendamentoLembrete.falha;
     }
-
     try {
-      await _agendarNoPlugin(tarefa, horario);
+      await _agendar(
+        _avisoIndividual(tarefa, horario, preferencias),
+        preferencias,
+      );
       return ResultadoAgendamentoLembrete.agendadoComPossivelAtraso;
     } catch (_) {
+      await cancelarLembrete(id);
       return ResultadoAgendamentoLembrete.falha;
     }
   }
@@ -248,7 +290,7 @@ class NotificacaoServiceAndroid implements NotificacaoService {
     try {
       await _plugin.cancel(id: _idNotificacao(tarefaIdentificador));
     } catch (_) {
-      // A persistência da tarefa nunca depende da disponibilidade do plugin.
+      // A persistência da tarefa não depende do Android.
     }
   }
 
@@ -256,77 +298,83 @@ class NotificacaoServiceAndroid implements NotificacaoService {
   Future<RelatorioSincronizacaoLembretes> sincronizarLembretes(
     List<Tarefa> tarefas, {
     required DateTime agora,
+  }) => _sincronizar(tarefas, agora, incluirIndividuais: true);
+
+  Future<RelatorioSincronizacaoLembretes> sincronizarAgenda(
+    List<Tarefa> tarefas,
+    DateTime agora,
+  ) => _sincronizar(tarefas, agora, incluirIndividuais: false);
+
+  Future<RelatorioSincronizacaoLembretes> _sincronizar(
+    List<Tarefa> tarefas,
+    DateTime agora, {
+    required bool incluirIndividuais,
   }) async {
-    if (!await _garantirInicializacao()) {
-      return const RelatorioSincronizacaoLembretes(
-        agendados: 0,
-        cancelados: 0,
-        falhas: 0,
-        statusPermissao: StatusPermissaoNotificacao.indisponivel,
-      );
-    }
-
+    final preferencias = await _preferencias();
     final permissao = await consultarPermissao();
-    final configuradas = tarefas
-        .where((tarefa) {
-          if (!tarefa.lembreteAtivo ||
-              tarefa.status == StatusTarefa.concluida ||
-              tarefa.identificador == null ||
-              tarefa.horario == null) {
-            return false;
-          }
-          return true;
-        })
-        .toList(growable: false);
-
-    var cancelados = 0;
     var agendados = 0;
-    var falhas = 0;
-    final pendentesPorId = <int, PendingNotificationRequest>{};
-    try {
-      final pendentes = await _plugin.pendingNotificationRequests();
-      for (final pendente in pendentes) {
-        if (pendente.payload?.startsWith(_prefixoPayload) ?? false) {
-          pendentesPorId[pendente.id] = pendente;
+    var cancelados = 0;
+    var falhas = permissao == StatusPermissaoNotificacao.erro ? 1 : 0;
+    final ativos = <int>{};
+    final pendentes = <int, PendingNotificationRequest>{};
+    if (permissao == StatusPermissaoNotificacao.permitida ||
+        permissao == StatusPermissaoNotificacao.negada) {
+      try {
+        for (final aviso in await _plugin.pendingNotificationRequests()) {
+          final payload = aviso.payload ?? '';
+          if (payload.startsWith(_prefixoAgenda) ||
+              (incluirIndividuais && payload.startsWith(_prefixoTarefa))) {
+            pendentes[aviso.id] = aviso;
+          }
         }
-      }
-    } catch (_) {
-      falhas++;
-    }
-
-    final idsDesejados = <int>{};
-    if (permissao == StatusPermissaoNotificacao.permitida) {
-      for (final tarefa in configuradas) {
-        final id = _idNotificacao(tarefa.identificador!);
-        final pendente = pendentesPorId[id];
-        final alvoFuturo = _instanteLocalDoLembrete(tarefa).isAfter(agora);
-        final pendenteInalterado =
-            pendente?.payload == _payloadDaTarefa(tarefa);
-        if (!alvoFuturo && pendenteInalterado) {
-          // Alarmes inexatos podem legitimamente continuar pendentes após o
-          // alvo. Preservá-los evita recriar no passado ou cancelar um atraso
-          // que o próprio Android ainda pretende entregar.
-          idsDesejados.add(id);
-          continue;
+        if (permissao == StatusPermissaoNotificacao.permitida) {
+          final desejados = AvisoAgenda.planejar(
+            tarefas,
+            preferencias,
+            agora,
+          ).map((aviso) => _avisoAgenda(aviso, preferencias)).toList();
+          if (incluirIndividuais) {
+            for (final tarefa in tarefas) {
+              final horario = _instanteLembrete(tarefa, preferencias);
+              final limite = DateTime(agora.year, agora.month, agora.day + 30);
+              if (horario != null &&
+                  tarefa.identificador != null &&
+                  tarefa.status != StatusTarefa.concluida &&
+                  (tarefa.serieIdentificador == null ||
+                      tarefa.lembreteAdiadoAte != null ||
+                      horario.isBefore(limite))) {
+                desejados.add(_avisoIndividual(tarefa, horario, preferencias));
+              }
+            }
+          }
+          for (final aviso in desejados) {
+            final anterior = pendentes[aviso.id];
+            if (anterior != null &&
+                anterior.payload == aviso.payload &&
+                anterior.title == aviso.titulo &&
+                anterior.body == aviso.texto) {
+              ativos.add(aviso.id);
+            } else if (aviso.horario.isAfter(agora)) {
+              try {
+                await _agendar(aviso, preferencias);
+                ativos.add(aviso.id);
+                agendados++;
+              } catch (_) {
+                falhas++;
+              }
+            }
+          }
         }
-        if (!alvoFuturo) continue;
-        try {
-          await _agendarNoPlugin(tarefa, tarefa.horario!);
-          idsDesejados.add(id);
-          agendados++;
-        } catch (_) {
-          falhas++;
+        for (final id in pendentes.keys.where((id) => !ativos.contains(id))) {
+          try {
+            await _plugin.cancel(id: id);
+            cancelados++;
+          } catch (_) {
+            falhas++;
+          }
         }
-      }
-    }
-    for (final pendente in pendentesPorId.values) {
-      if (!idsDesejados.contains(pendente.id)) {
-        try {
-          await _plugin.cancel(id: pendente.id);
-          cancelados++;
-        } catch (_) {
-          falhas++;
-        }
+      } catch (_) {
+        falhas++;
       }
     }
     return RelatorioSincronizacaoLembretes(
@@ -337,9 +385,7 @@ class NotificacaoServiceAndroid implements NotificacaoService {
     );
   }
 
-  Future<bool> _garantirInicializacao() {
-    return _inicializacao ??= _inicializar();
-  }
+  Future<bool> _garantirInicializacao() => _inicializacao ??= _inicializar();
 
   Future<bool> _inicializar() async {
     if (kIsWeb || defaultTargetPlatform != TargetPlatform.android) return false;
@@ -348,48 +394,38 @@ class NotificacaoServiceAndroid implements NotificacaoService {
         settings: const InitializationSettings(
           android: AndroidInitializationSettings(_icone),
         ),
+        onDidReceiveNotificationResponse: _receberResposta,
       );
+      if (inicializada == true && onResposta != null) {
+        final abertura = await _plugin.getNotificationAppLaunchDetails();
+        final resposta = abertura?.notificationResponse;
+        if (abertura?.didNotificationLaunchApp == true && resposta != null) {
+          _receberResposta(resposta);
+        }
+      }
       return inicializada == true;
     } catch (_) {
       return false;
     }
   }
 
-  Future<void> _agendarNoPlugin(Tarefa tarefa, HorarioTarefa horario) async {
-    final inicioLocal = DateTime(
-      tarefa.data.year,
-      tarefa.data.month,
-      tarefa.data.day,
-      horario.hora,
-      horario.minuto,
+  void _receberResposta(NotificationResponse resposta) {
+    final acao = RespostaLembrete.interpretar(
+      resposta.payload,
+      resposta.actionId,
     );
-    final instanteLocal = inicioLocal.subtract(tarefa.antecedenciaLembrete);
-    final instante = tz.TZDateTime.from(instanteLocal.toUtc(), tz.UTC);
-    final antecedencia = tarefa.antecedenciaLembrete.inMinutes;
-    await _plugin.zonedSchedule(
-      id: _idNotificacao(tarefa.identificador!),
-      title: tarefa.titulo,
-      body: antecedencia == 0
-          ? 'Está na hora desta tarefa.'
-          : 'Esta tarefa começa em $antecedencia minutos.',
-      scheduledDate: instante,
-      notificationDetails: const NotificationDetails(
-        android: AndroidNotificationDetails(
-          _canalId,
-          'Lembretes individuais',
-          channelDescription: 'Lembretes configurados em cada tarefa',
-          importance: Importance.high,
-          priority: Priority.high,
-          icon: _icone,
-        ),
-      ),
-      androidScheduleMode: AndroidScheduleMode.inexactAllowWhileIdle,
-      payload: _payloadDaTarefa(tarefa),
-    );
+    if (acao != null) onResposta?.call(acao);
   }
 
-  DateTime _instanteLocalDoLembrete(Tarefa tarefa) {
-    final horario = tarefa.horario!;
+  DateTime? _instanteLembrete(
+    Tarefa tarefa,
+    PreferenciasNotificacoes preferencias,
+  ) {
+    if (tarefa.lembreteAdiadoAte != null) return tarefa.lembreteAdiadoAte;
+    final horario = tarefa.horario;
+    if (!preferencias.individuais || !tarefa.lembreteAtivo || horario == null) {
+      return null;
+    }
     return DateTime(
       tarefa.data.year,
       tarefa.data.month,
@@ -399,23 +435,105 @@ class NotificacaoServiceAndroid implements NotificacaoService {
     ).subtract(tarefa.antecedenciaLembrete);
   }
 
-  String _payloadDaTarefa(Tarefa tarefa) {
-    final horario = tarefa.horario!;
-    final data = tarefa.data;
-    return '$_prefixoPayload${tarefa.identificador}|'
-        '${data.year}-${data.month}-${data.day}|'
-        '${horario.hora}:${horario.minuto}|'
-        '${tarefa.antecedenciaLembrete.inMinutes}|'
-        '${_instanteLocalDoLembrete(tarefa).timeZoneOffset.inMinutes}|'
-        '${Uri.encodeComponent(tarefa.titulo)}';
+  _AvisoAndroid _avisoIndividual(
+    Tarefa tarefa,
+    DateTime horario,
+    PreferenciasNotificacoes preferencias,
+  ) {
+    final id = tarefa.identificador!;
+    final minutos = tarefa.antecedenciaLembrete.inMinutes;
+    return _AvisoAndroid(
+      _idNotificacao(id),
+      horario,
+      tarefa.titulo,
+      tarefa.lembreteAdiadoAte != null
+          ? 'Lembrete adiado da tarefa.'
+          : minutos == 0
+          ? 'Está na hora desta tarefa.'
+          : 'Esta tarefa começa em $minutos minutos.',
+      '$_prefixoTarefa$id|${horario.millisecondsSinceEpoch}|${_canal(preferencias)}',
+    );
   }
 
-  Future<void> _cancelarSemFalhar(int identificador) async {
-    try {
-      await cancelarLembrete(identificador);
-    } catch (_) {}
+  _AvisoAndroid _avisoAgenda(
+    AvisoAgenda aviso,
+    PreferenciasNotificacoes preferencias,
+  ) {
+    final primeira = aviso.tarefas.first;
+    final lista = aviso.tarefas
+        .take(4)
+        .map((tarefa) => '• ${tarefa.titulo}')
+        .join('\n');
+    final restante = aviso.tarefas.length - 4;
+    final complemento = restante > 0 ? '\nE mais $restante.' : '';
+    final acoes = aviso.tarefas.length > 1
+        ? '\nAções para: ${primeira.titulo}'
+        : '';
+    return _AvisoAndroid(
+      aviso.id,
+      aviso.horario,
+      aviso.titulo,
+      '$lista$complemento$acoes',
+      '$_prefixoAgenda${primeira.identificador}|${aviso.horario.millisecondsSinceEpoch}|${_canal(preferencias)}',
+    );
   }
+
+  String _canal(PreferenciasNotificacoes p) => p.som && p.vibracao
+      ? 'lembretes_individuais'
+      : 'flowtask_${p.som ? "som" : "mudo"}_${p.vibracao ? "vibra" : "sem_vibracao"}';
+
+  Future<void> _agendar(_AvisoAndroid aviso, PreferenciasNotificacoes p) =>
+      _plugin.zonedSchedule(
+        id: aviso.id,
+        title: aviso.titulo,
+        body: aviso.texto,
+        scheduledDate: tz.TZDateTime.from(aviso.horario.toUtc(), tz.UTC),
+        notificationDetails: NotificationDetails(
+          android: AndroidNotificationDetails(
+            _canal(p),
+            'Lembretes do FlowTask',
+            channelDescription: 'Avisos de tarefas e planejamento',
+            importance: Importance.high,
+            priority: Priority.high,
+            icon: _icone,
+            playSound: p.som,
+            enableVibration: p.vibracao,
+            styleInformation: BigTextStyleInformation(aviso.texto),
+            actions: const [
+              AndroidNotificationAction(
+                'concluir',
+                'Concluir',
+                showsUserInterface: true,
+                semanticAction: SemanticAction.markAsRead,
+              ),
+              AndroidNotificationAction(
+                'adiar',
+                'Adiar 15 min',
+                showsUserInterface: true,
+              ),
+            ],
+          ),
+        ),
+        androidScheduleMode: AndroidScheduleMode.inexactAllowWhileIdle,
+        payload: aviso.payload,
+      );
 
   int _idNotificacao(int tarefaIdentificador) =>
       tarefaIdentificador & 0x7fffffff;
+}
+
+class _AvisoAndroid {
+  const _AvisoAndroid(
+    this.id,
+    this.horario,
+    this.titulo,
+    this.texto,
+    this.payload,
+  );
+
+  final int id;
+  final DateTime horario;
+  final String titulo;
+  final String texto;
+  final String payload;
 }

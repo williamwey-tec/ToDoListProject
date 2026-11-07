@@ -42,6 +42,7 @@ class _TelaTarefaState extends State<TelaTarefa> {
   late DateTime _dataSelecionada;
   TimeOfDay? _horarioSelecionado;
   late PrioridadeTarefa _prioridade;
+  late RepeticaoTarefa _repeticao;
   late bool _lembreteAtivo;
   late int _antecedenciaMinutos;
   bool _salvando = false;
@@ -60,6 +61,7 @@ class _TelaTarefaState extends State<TelaTarefa> {
             minute: tarefa.horario!.minuto,
           );
     _prioridade = tarefa?.prioridade ?? PrioridadeTarefa.media;
+    _repeticao = tarefa?.repeticao ?? RepeticaoTarefa.nenhuma;
     _lembreteAtivo = tarefa?.lembreteAtivo ?? false;
     _antecedenciaMinutos = tarefa?.antecedenciaLembrete.inMinutes ?? 15;
 
@@ -172,6 +174,12 @@ class _TelaTarefaState extends State<TelaTarefa> {
     setState(() => _erroOperacao = null);
     if (!(_chaveFormulario.currentState?.validate() ?? false)) return;
 
+    final controle = widget.controleTarefa;
+    final recorrente =
+        widget.tarefa?.serieIdentificador != null &&
+        controle is OperacoesRecorrencia;
+    final alcance = recorrente ? await _escolherAlcance(excluir: false) : null;
+    if (!mounted || (recorrente && alcance == null)) return;
     final horario = _horarioSelecionado!;
     final tarefa = Tarefa(
       titulo: _tituloController.text,
@@ -183,6 +191,7 @@ class _TelaTarefaState extends State<TelaTarefa> {
       ),
       tempoRegistrado: widget.tarefa?.tempoRegistrado ?? Duration.zero,
       prioridade: _prioridade,
+      repeticao: _repeticao,
       categoria: _textoOpcional(_categoriaController),
       status: widget.tarefa?.status ?? StatusTarefa.pendente,
       lembreteAtivo: _lembreteAtivo,
@@ -191,7 +200,13 @@ class _TelaTarefaState extends State<TelaTarefa> {
 
     setState(() => _salvando = true);
     try {
-      if (widget.estaEditando) {
+      if (alcance != null && controle is OperacoesRecorrencia) {
+        await (controle as OperacoesRecorrencia).editarOcorrencia(
+          widget.tarefa!.identificador!,
+          tarefa,
+          alcance,
+        );
+      } else if (widget.estaEditando) {
         await widget.controleTarefa.editarTarefa(
           widget.tarefa!.identificador!,
           tarefa,
@@ -216,35 +231,87 @@ class _TelaTarefaState extends State<TelaTarefa> {
     }
   }
 
-  Future<void> _excluir() async {
-    if (_salvando) return;
-    final confirmou = await showDialog<bool>(
+  Future<AlcanceRecorrencia?> _escolherAlcance({required bool excluir}) {
+    final mudouRepeticao = !excluir && _repeticao != widget.tarefa?.repeticao;
+    return showDialog<AlcanceRecorrencia>(
       context: context,
-      builder: (contextoDialogo) => AlertDialog(
-        title: const Text('Excluir tarefa?'),
-        content: const Text(
-          'Esta ação remove a tarefa salva e não pode ser desfeita.',
+      builder: (contexto) => SimpleDialog(
+        title: Text(
+          excluir
+              ? 'Excluir ocorrências?'
+              : 'Salvar alterações em quais tarefas?',
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(contextoDialogo).pop(false),
-            child: const Text('Cancelar'),
+        children: [
+          if (mudouRepeticao)
+            const Padding(
+              padding: EdgeInsets.fromLTRB(24, 0, 24, 8),
+              child: Text(
+                'Mudar a repetição também afeta as próximas ocorrências.',
+              ),
+            ),
+          if (!mudouRepeticao)
+            SimpleDialogOption(
+              onPressed: () =>
+                  Navigator.pop(contexto, AlcanceRecorrencia.somenteEsta),
+              child: const Text('Somente esta ocorrência'),
+            ),
+          SimpleDialogOption(
+            onPressed: () =>
+                Navigator.pop(contexto, AlcanceRecorrencia.estaEProximas),
+            child: const Text('Esta e as próximas'),
           ),
-          FilledButton(
-            onPressed: () => Navigator.of(contextoDialogo).pop(true),
-            child: const Text('Excluir'),
+          SimpleDialogOption(
+            onPressed: () => Navigator.pop(contexto),
+            child: const Text('Cancelar'),
           ),
         ],
       ),
     );
-    if (confirmou != true || !mounted) return;
+  }
+
+  Future<void> _excluir() async {
+    if (_salvando) return;
+    final controle = widget.controleTarefa;
+    final recorrente =
+        widget.tarefa?.serieIdentificador != null &&
+        controle is OperacoesRecorrencia;
+    final alcance = recorrente ? await _escolherAlcance(excluir: true) : null;
+    if (!mounted || (recorrente && alcance == null)) return;
+    final confirmou =
+        recorrente ||
+        await showDialog<bool>(
+              context: context,
+              builder: (contextoDialogo) => AlertDialog(
+                title: const Text('Excluir tarefa?'),
+                content: const Text(
+                  'Esta ação remove a tarefa salva e não pode ser desfeita.',
+                ),
+                actions: [
+                  TextButton(
+                    onPressed: () => Navigator.of(contextoDialogo).pop(false),
+                    child: const Text('Cancelar'),
+                  ),
+                  FilledButton(
+                    onPressed: () => Navigator.of(contextoDialogo).pop(true),
+                    child: const Text('Excluir'),
+                  ),
+                ],
+              ),
+            ) ==
+            true;
+    if (!confirmou || !mounted) return;
 
     setState(() {
       _salvando = true;
       _erroOperacao = null;
     });
     try {
-      await widget.controleTarefa.excluirTarefa(widget.tarefa!.identificador!);
+      final id = widget.tarefa!.identificador!;
+      if (alcance != null && controle is OperacoesRecorrencia) {
+        await (controle as OperacoesRecorrencia).excluirOcorrencia(id, alcance);
+      } else {
+        await controle.excluirTarefa(id);
+      }
       if (mounted) Navigator.of(context).pop(true);
     } catch (erro) {
       if (!mounted) return;
@@ -479,6 +546,33 @@ class _TelaTarefaState extends State<TelaTarefa> {
                     }).toList(),
                   ),
                   const SizedBox(height: 22),
+                  DropdownButtonFormField<RepeticaoTarefa>(
+                    key: const Key('repeticao_tarefa'),
+                    initialValue: _repeticao,
+                    decoration: const InputDecoration(labelText: 'Repetição'),
+                    items: const [
+                      DropdownMenuItem(
+                        value: RepeticaoTarefa.nenhuma,
+                        child: Text('Sem repetição'),
+                      ),
+                      DropdownMenuItem(
+                        value: RepeticaoTarefa.diaria,
+                        child: Text('Diária'),
+                      ),
+                      DropdownMenuItem(
+                        value: RepeticaoTarefa.semanal,
+                        child: Text('Semanal'),
+                      ),
+                    ],
+                    onChanged: _salvando
+                        ? null
+                        : (valor) {
+                            if (valor != null) {
+                              setState(() => _repeticao = valor);
+                            }
+                          },
+                  ),
+                  const SizedBox(height: 18),
                   Text(
                     'Quando lembrar?',
                     style: tema.textTheme.titleMedium?.copyWith(

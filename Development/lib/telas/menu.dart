@@ -118,7 +118,7 @@ class Menu extends StatefulWidget {
   State<Menu> createState() => _MenuState();
 }
 
-class _MenuState extends State<Menu> {
+class _MenuState extends State<Menu> with WidgetsBindingObserver {
   int _indiceSelecionado = 0;
   late DateTime _dataSelecionadaCalendario;
   int _revisaoTarefas = 0;
@@ -165,13 +165,21 @@ class _MenuState extends State<Menu> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _possuiConfiguracoesService = widget.configuracoesService == null;
     _configuracoesService =
         widget.configuracoesService ?? ConfiguracoesService();
     _notificacaoService =
         widget.notificacaoService ??
         (!kIsWeb && defaultTargetPlatform == TargetPlatform.android
-            ? NotificacaoServiceAndroid()
+            ? NotificacaoServiceAndroid(
+                carregarPreferencias: () async {
+                  await _configuracoesService.carregar();
+                  return _configuracoesService.configuracoes.notificacoes;
+                },
+                onResposta: (resposta) =>
+                    unawaited(_responderNotificacao(resposta)),
+              )
             : const NotificacaoServiceIndisponivel());
     unawaited(_configuracoesService.carregar());
     final hoje = widget.relogio();
@@ -293,12 +301,55 @@ class _MenuState extends State<Menu> {
     }
   }
 
+  Future<void> _responderNotificacao(RespostaLembrete resposta) async {
+    if (!mounted) return;
+    final controle = _obterControleTarefa();
+    try {
+      switch (resposta.acao) {
+        case AcaoNotificacao.concluir:
+          await controle.concluirTarefa(resposta.tarefaId);
+        case AcaoNotificacao.adiar:
+          if (controle is ControlTarefa) {
+            final resultado = await controle.adiarLembrete(resposta.tarefaId);
+            if (mounted) {
+              final mensagem =
+                  resultado ==
+                      ResultadoAgendamentoLembrete.agendadoComPossivelAtraso
+                  ? 'Lembrete adiado por 15 minutos.'
+                  : 'Não foi possível adiar este lembrete.';
+              ScaffoldMessenger.of(
+                context,
+              ).showSnackBar(SnackBar(content: Text(mensagem)));
+            }
+          }
+        case AcaoNotificacao.abrir:
+          break;
+      }
+      if (!mounted) return;
+      setState(() {
+        _indiceSelecionado = 0;
+        _revisaoTarefas++;
+      });
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Não foi possível atualizar a tarefa da notificação.',
+            ),
+          ),
+        );
+      }
+    }
+  }
+
   void _abrirNotificacoes() {
     final controle = _obterControleTarefa();
     Navigator.of(context).push(
       MaterialPageRoute<void>(
         builder: (_) => TelaNotificacoes(
           notificacaoService: _notificacaoService,
+          configuracoesService: _configuracoesService,
           sincronizarLembretes: controle is OperacoesLembreteTarefa
               ? (controle as OperacoesLembreteTarefa).sincronizarLembretes
               : null,
@@ -308,7 +359,18 @@ class _MenuState extends State<Menu> {
   }
 
   @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    final controle = _controleTarefa;
+    if (state == AppLifecycleState.resumed &&
+        _notificacaoService is NotificacaoServiceAndroid &&
+        controle is OperacoesLembreteTarefa) {
+      unawaited((controle as OperacoesLembreteTarefa).sincronizarLembretes());
+    }
+  }
+
+  @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     final banco = _banco;
     if (banco != null) unawaited(banco.fechar());
     if (_possuiConfiguracoesService) _configuracoesService.dispose();

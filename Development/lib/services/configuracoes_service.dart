@@ -1,7 +1,10 @@
+import 'dart:convert';
+
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../model/configuracoes.dart';
+import '../model/preferencias_notificacoes.dart';
 
 /// Contrato pequeno para permitir validar a persistência sem acessar a
 /// plataforma nos testes.
@@ -11,7 +14,36 @@ abstract interface class ArmazenamentoConfiguracoes {
   Future<void> salvarNomeExibicao(String? nomeExibicao);
 }
 
-class ArmazenamentoPreferencias implements ArmazenamentoConfiguracoes {
+abstract interface class ArmazenamentoNotificacoes {
+  Future<PreferenciasNotificacoes> lerNotificacoes();
+  Future<void> salvarNotificacoes(PreferenciasNotificacoes valor);
+}
+
+class ArmazenamentoPreferencias
+    implements ArmazenamentoConfiguracoes, ArmazenamentoNotificacoes {
+  static const _chaveNotificacoes = 'notificacoes.preferencias';
+
+  @override
+  Future<PreferenciasNotificacoes> lerNotificacoes() async {
+    final preferencias = await SharedPreferences.getInstance();
+    final json = preferencias.getString(_chaveNotificacoes);
+    if (json == null) return const PreferenciasNotificacoes();
+    return PreferenciasNotificacoes.doMapa(
+      jsonDecode(json) as Map<String, dynamic>,
+    );
+  }
+
+  @override
+  Future<void> salvarNotificacoes(PreferenciasNotificacoes valor) async {
+    final preferencias = await SharedPreferences.getInstance();
+    if (!await preferencias.setString(
+      _chaveNotificacoes,
+      jsonEncode(valor.paraMapa()),
+    )) {
+      throw StateError('Não foi possível salvar as notificações.');
+    }
+  }
+
   static const _chaveNomeExibicao = 'perfil.nome_exibicao';
 
   @override
@@ -49,6 +81,13 @@ class ConfiguracoesService extends ChangeNotifier {
 
   Future<void> carregar() => _carregamento ??= _carregarUmaVez();
 
+  ArmazenamentoNotificacoes? get _armazenamentoNotificacoes {
+    final armazenamento = _armazenamento;
+    return armazenamento is ArmazenamentoNotificacoes
+        ? armazenamento as ArmazenamentoNotificacoes
+        : null;
+  }
+
   Future<void> _carregarUmaVez() async {
     try {
       final nome = await _armazenamento.lerNomeExibicao();
@@ -57,9 +96,16 @@ class ConfiguracoesService extends ChangeNotifier {
       );
     } catch (_) {
       _configuracoes = const Configuracoes();
-    } finally {
-      if (_ativo) notifyListeners();
     }
+    try {
+      final notificacoes = await _armazenamentoNotificacoes?.lerNotificacoes();
+      if (notificacoes != null) {
+        _configuracoes = _configuracoes.copiarComNotificacoes(notificacoes);
+      }
+    } catch (_) {
+      // Uma preferência inválida não impede carregar o perfil.
+    }
+    if (_ativo) notifyListeners();
   }
 
   Future<void> salvarNomeExibicao(String? valor) async {
@@ -68,6 +114,13 @@ class ConfiguracoesService extends ChangeNotifier {
     await _armazenamento.salvarNomeExibicao(nomeNormalizado);
 
     _configuracoes = _configuracoes.copiarComNomeExibicao(nomeNormalizado);
+    if (_ativo) notifyListeners();
+  }
+
+  Future<void> salvarNotificacoes(PreferenciasNotificacoes valor) async {
+    await carregar();
+    await _armazenamentoNotificacoes?.salvarNotificacoes(valor);
+    _configuracoes = _configuracoes.copiarComNotificacoes(valor);
     if (_ativo) notifyListeners();
   }
 

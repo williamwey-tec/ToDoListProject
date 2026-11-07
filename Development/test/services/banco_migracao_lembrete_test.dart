@@ -32,6 +32,19 @@ Future<void> _criarBancoLegado(String caminho, int versao) async {
           CREATE INDEX indice_tarefas_data_ordem
           ON tarefas (data_civil, horario_minutos, identificador)
         ''');
+        if (versao >= 3) {
+          await db.execute(
+            'ALTER TABLE tarefas ADD COLUMN lembrete_ativo INTEGER NOT NULL DEFAULT 0',
+          );
+          await db.execute(
+            'ALTER TABLE tarefas ADD COLUMN lembrete_antecedencia_minutos INTEGER NOT NULL DEFAULT 15',
+          );
+        }
+        if (versao >= 4) {
+          await db.execute(
+            'ALTER TABLE tarefas ADD COLUMN lembrete_adiado_ms INTEGER',
+          );
+        }
         if (versao >= 2) {
           await db.execute('''
             CREATE TABLE sessao_foco (
@@ -62,6 +75,12 @@ Future<void> _criarBancoLegado(String caminho, int versao) async {
     'prioridade': 'alta',
     'categoria': 'Legado',
     'situacao': 'pendente',
+    if (versao >= 3) ...{
+      'lembrete_ativo': 1,
+      'lembrete_antecedencia_minutos': 30,
+    },
+    if (versao >= 4)
+      'lembrete_adiado_ms': DateTime(2026, 11, 8, 9).millisecondsSinceEpoch,
   });
   if (versao >= 2) {
     await banco.insert('sessao_foco', {
@@ -76,7 +95,7 @@ Future<void> _criarBancoLegado(String caminho, int versao) async {
 void main() {
   setUpAll(sqfliteFfiInit);
 
-  for (final versao in [1, 2]) {
+  for (final versao in [1, 2, 3, 4]) {
     test('migra base v$versao sem destruir tarefa ou sessão', () async {
       final diretorio = await Directory.systemTemp.createTemp(
         'flow_task_migracao_v$versao',
@@ -93,8 +112,16 @@ void main() {
         expect(tarefa!.titulo, 'Tarefa da v$versao');
         expect(tarefa.descricao, 'Preservar');
         expect(tarefa.tempoRegistrado, const Duration(minutes: 3));
-        expect(tarefa.lembreteAtivo, isFalse);
-        expect(tarefa.antecedenciaLembrete, const Duration(minutes: 15));
+        expect(tarefa.lembreteAtivo, versao >= 3);
+        expect(
+          tarefa.antecedenciaLembrete,
+          Duration(minutes: versao >= 3 ? 30 : 15),
+        );
+        expect(
+          tarefa.lembreteAdiadoAte,
+          versao >= 4 ? DateTime(2026, 11, 8, 9) : null,
+        );
+        expect(tarefa.serieIdentificador, isNull);
 
         final sessao = await service.consultarSessaoFoco();
         if (versao == 1) {

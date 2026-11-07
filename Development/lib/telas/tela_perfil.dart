@@ -107,6 +107,7 @@ class _TelaPerfilState extends State<TelaPerfil> {
       MaterialPageRoute<void>(
         builder: (_) => TelaNotificacoes(
           notificacaoService: widget.notificacaoService,
+          configuracoesService: widget.configuracoesService,
           sincronizarLembretes: widget.sincronizarLembretes,
         ),
       ),

@@ -4,6 +4,10 @@ enum PrioridadeTarefa { baixa, media, alta }
 /// Estados de andamento de uma tarefa no FlowTask.
 enum StatusTarefa { pendente, concluida, atrasada, pausada }
 
+enum RepeticaoTarefa { nenhuma, diaria, semanal }
+
+enum AlcanceRecorrencia { somenteEsta, estaEProximas }
+
 /// Horário civil de uma tarefa, sem data ou fuso horário associados.
 ///
 /// Manter hora e minuto em um tipo próprio evita acoplar o modelo compartilhado
@@ -44,6 +48,9 @@ class Tarefa {
   final PrioridadeTarefa prioridade;
   final String? categoria;
   final StatusTarefa status;
+  final int? serieIdentificador;
+  final RepeticaoTarefa repeticao;
+  final DateTime? lembreteAdiadoAte;
   final bool lembreteAtivo;
   final Duration antecedenciaLembrete;
 
@@ -58,6 +65,9 @@ class Tarefa {
     this.prioridade = PrioridadeTarefa.media,
     this.categoria,
     this.status = StatusTarefa.pendente,
+    this.serieIdentificador,
+    this.repeticao = RepeticaoTarefa.nenhuma,
+    this.lembreteAdiadoAte,
     this.lembreteAtivo = false,
     this.antecedenciaLembrete = const Duration(minutes: 15),
   }) : data = DateTime(data.year, data.month, data.day) {
@@ -83,6 +93,9 @@ class Tarefa {
       prioridade: prioridade,
       categoria: categoria,
       status: novoStatus,
+      serieIdentificador: serieIdentificador,
+      repeticao: repeticao,
+      lembreteAdiadoAte: lembreteAdiadoAte,
       lembreteAtivo: lembreteAtivo,
       antecedenciaLembrete: antecedenciaLembrete,
     );
